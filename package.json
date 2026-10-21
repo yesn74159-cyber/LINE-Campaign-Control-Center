@@ -28,6 +28,11 @@
     "test:phase4a": "npm run build:api && node --test tests/phase4a.integration.test.mjs",
     "test:phase4b": "npm run build:api && node --test --test-concurrency=1 tests/phase4b.integration.test.mjs",
     "test:e2e": "node --test --test-concurrency=1 tests/e2e.visual.test.mjs",
+    "test:tenant": "npm run build:api && node --test tests/multitenant-login.test.mjs tests/tenant-admin-api.test.mjs tests/multitenant-foundation.integration.test.mjs",
+    "test:tenant:ui": "npm run build:admin && node --test tests/tenant-admin.ui.test.mjs",
+    "test:oa:connect": "npm run build:api && node --test tests/oa-live-connect.test.mjs",
+    "test:live-contract": "npm run build:api && node --test tests/live-push-payload.test.mjs",
+    "test:campaign-mock": "npm run build:api && node --test tests/campaign-mock.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

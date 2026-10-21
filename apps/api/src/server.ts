@@ -9,13 +9,17 @@ import { createPostgresRepository, createMemoryRepository, verifyPassword, type 
 import { assertControlReason, assertEmail, assertFlexJson, assertOaMetadata, assertPassword, assertScheduledAt, assertSchedulerStatus, assertTimeZone, can } from './validation.js';
 import { payloadHash, verifyLineSignature } from './webhook.js';
 import type { AdminUser } from './types.js';
+import { registerTenantAdminRoutes } from './tenantAdmin.js';
+import { registerOaConnectRoutes } from './lineOaConnect.js';
+import { CampaignMockStore } from './campaignMock.js';
+import { registerCampaignMockRoutes } from './campaignRoutes.js';
 
 type RequestWithUser = FastifyRequest & { user?: AdminUser; raw: FastifyRequest['raw'] & { rawBody?: string } };
 
 function defaultRepository() {
-  const database = createDatabase();
   const persistence = process.env.PERSISTENCE || 'postgres';
-  if (persistence === 'memory') return { repository: createMemoryRepository(), database };
+  if (persistence === 'memory') return { repository: createMemoryRepository(), database: null };
+  const database = createDatabase();
   if (!database.pool) throw new Error('PERSISTENCE=postgres requires DATABASE_URL');
   return { repository: createPostgresRepository(database.pool), database };
 }
@@ -57,6 +61,19 @@ export function buildApp(injectedRepository?: Repository) {
     return requireCsrf(request, reply);
   };
 
+  if (repo.kind === 'memory') {
+    const mockStore = new CampaignMockStore({
+      id: 'memory-admin',
+      workspaceId: 'memory-workspace',
+      email: process.env.MEMORY_ADMIN_EMAIL || 'admin@memory.local',
+      displayName: 'Memory Admin',
+      role: 'owner'
+    });
+    registerCampaignMockRoutes(app, mockStore, authenticate, requireCsrf, workspaceId => repo.listOas(workspaceId));
+  } else {
+    registerTenantAdminRoutes(app, selected.database?.pool || null, authenticate, requireCsrf);
+    registerOaConnectRoutes(app, selected.database?.pool || null, authenticate, requireCsrf);
+  }
   app.get('/health', async () => ({ ok: true, mode: process.env.APP_MODE || 'DRY_RUN', persistence: repo.kind }));
   app.post<{ Body: { email: string; password: string } }>('/api/auth/login', { schema: { body: { type: 'object', required: ['email', 'password'], additionalProperties: false, properties: { email: { type: 'string', minLength: 3, maxLength: 320 }, password: { type: 'string', minLength: 12, maxLength: 200 } } } } }, async (request, reply) => {
     try { const email = assertEmail(request.body.email); const password = assertPassword(request.body.password); const user = await repo.getUserByEmail(email); if (!user || !verifyPassword(user, password)) return reply.code(401).send({ error: 'invalid credentials' }); const session = await repo.createSession(user.id); reply.setCookie('ccc_session', session.token, sessionCookieOptions()); reply.setCookie('ccc_csrf', createSessionToken(), csrfCookieOptions()); return { user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role }, expiresAt: session.expiresAt.toISOString() }; }
@@ -83,7 +100,7 @@ export function buildApp(injectedRepository?: Repository) {
   app.get('/api/scheduler/jobs', { preHandler: authorize('read') }, async (request) => ({ jobs: await repo.listJobs((request as RequestWithUser).user!.workspaceId) }));
   app.get<{ Params: { id: string } }>('/api/scheduler/jobs/:id/outbox', { preHandler: authorize('read'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100 } } } } }, async (request) => ({ deliveries: await repo.listOutbox((request as RequestWithUser).user!.workspaceId, request.params.id) }));
   app.get('/api/automation', { preHandler: authorize('read') }, async (request) => { const jobs = await repo.listJobs((request as RequestWithUser).user!.workspaceId); const summary: Record<string, number> = {}; for (const job of jobs) summary[job.status] = (summary[job.status] || 0) + 1; return { jobs, summary }; });
-  app.get('/api/audit', { preHandler: authorize('read') }, async (request) => ({ events: await repo.listAudit((request as RequestWithUser).user!.workspaceId) }));
+  if (repo.kind !== 'memory') app.get('/api/audit', { preHandler: authorize('read') }, async (request) => ({ events: await repo.listAudit((request as RequestWithUser).user!.workspaceId) }));
   app.post<{ Body: { campaignId: string; oaId: string; scheduledAt: string; timeZone?: string; status?: 'DRAFT' | 'SCHEDULED' } }>('/api/scheduler/jobs', { preHandler: authorize('write'), schema: { body: { type: 'object', required: ['campaignId', 'oaId', 'scheduledAt'], additionalProperties: false, properties: { campaignId: { type: 'string', minLength: 1, maxLength: 80 }, oaId: { type: 'string', minLength: 1, maxLength: 100 }, scheduledAt: { type: 'string', format: 'date-time' }, timeZone: { type: 'string', maxLength: 64 }, status: { type: 'string', enum: ['DRAFT', 'SCHEDULED'] } } } } }, async (request, reply) => { try { const status = assertSchedulerStatus(request.body.status); return reply.code(201).send(await repo.addJob({ campaignId: request.body.campaignId, oaId: request.body.oaId, scheduledAt: assertScheduledAt(request.body.scheduledAt, status), timeZone: assertTimeZone(request.body.timeZone || 'Asia/Bangkok'), status, workspaceId: (request as RequestWithUser).user!.workspaceId, actor: (request as RequestWithUser).user!.email })); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   const jobParams = { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-zA-Z0-9_-]+$' } } };
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/pause', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.pauseJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
