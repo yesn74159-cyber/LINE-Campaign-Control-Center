@@ -1,0 +1,193 @@
+{
+  "type": "flex",
+  "altText": "{{TITLE}} — เพิ่มเพื่อน OA และเปิด LINE MINI App",
+  "contents": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "💬",
+                  "size": "xxl",
+                  "color": "#06C755",
+                  "align": "center"
+                }
+              ],
+              "width": "56px",
+              "height": "56px",
+              "cornerRadius": "999px",
+              "backgroundColor": "#DDF8E8",
+              "alignItems": "center",
+              "justifyContent": "center"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "{{TITLE}}",
+                  "size": "lg",
+                  "color": "#222222",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "@453yfyvc",
+                  "size": "sm",
+                  "color": "#888888"
+                }
+              ],
+              "flex": 1,
+              "justifyContent": "center"
+            }
+          ],
+          "spacing": "md",
+          "alignItems": "center"
+        },
+        {
+          "type": "text",
+          "text": "{{DESCRIPTION}}",
+          "size": "sm",
+          "color": "#555555",
+          "wrap": true
+        },
+        {
+          "type": "separator",
+          "margin": "md"
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "LINE OA",
+                  "size": "sm",
+                  "color": "#0F8F48",
+                  "weight": "bold",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "เพิ่มเพื่อน",
+                  "size": "xxs",
+                  "color": "#888888",
+                  "align": "center",
+                  "margin": "xs"
+                }
+              ],
+              "flex": 1,
+              "alignItems": "center"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "MINI App",
+                  "size": "sm",
+                  "color": "#0F8F48",
+                  "weight": "bold",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "ดูแคมเปญ",
+                  "size": "xxs",
+                  "color": "#888888",
+                  "align": "center",
+                  "margin": "xs"
+                }
+              ],
+              "flex": 1,
+              "alignItems": "center"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "Flex",
+                  "size": "sm",
+                  "color": "#0F8F48",
+                  "weight": "bold",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "แชร์ต่อ",
+                  "size": "xxs",
+                  "color": "#888888",
+                  "align": "center",
+                  "margin": "xs"
+                }
+              ],
+              "flex": 1,
+              "alignItems": "center"
+            }
+          ],
+          "margin": "md",
+          "spacing": "sm"
+        },
+        {
+          "type": "text",
+          "text": "DEMO • ไม่มีข้อมูลยอดผู้ติดตามหรือสิทธิ์รางวัลจริง",
+          "size": "xxs",
+          "color": "#999999",
+          "wrap": true,
+          "margin": "sm"
+        }
+      ],
+      "spacing": "md",
+      "paddingAll": "16px"
+    },
+    "footer": {
+      "type": "box",
+      "layout": "horizontal",
+      "contents": [
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "เพิ่มเพื่อน OA",
+            "uri": "{{OA_URL}}"
+          },
+          "style": "primary",
+          "flex": 1,
+          "color": "#06C755"
+        },
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "{{CTA}}",
+            "uri": "{{LIFF_URL}}"
+          },
+          "style": "secondary",
+          "flex": 1
+        }
+      ],
+      "spacing": "sm",
+      "paddingAll": "12px"
+    }
+  }
+}

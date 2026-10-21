@@ -1,0 +1,332 @@
+{
+  "type": "flex",
+  "altText": "{{TITLE}} • LINE OA กิจกรรม",
+  "contents": {
+    "type": "bubble",
+    "size": "giga",
+    "header": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "💜",
+                  "size": "xl",
+                  "color": "#FFFFFF",
+                  "align": "center"
+                }
+              ],
+              "backgroundColor": "#FFFFFF",
+              "cornerRadius": "md",
+              "paddingAll": "8px",
+              "width": "52px",
+              "height": "52px",
+              "justifyContent": "center"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "LINE Campaign",
+                  "size": "md",
+                  "color": "#FFFFFF",
+                  "weight": "bold"
+                },
+                {
+                  "type": "text",
+                  "text": "MINI App • Developing",
+                  "size": "xxs",
+                  "color": "#EEEFFF"
+                }
+              ],
+              "justifyContent": "center"
+            }
+          ],
+          "spacing": "md"
+        },
+        {
+          "type": "text",
+          "text": "{{TITLE}}",
+          "size": "xl",
+          "color": "#FFFFFF",
+          "weight": "bold",
+          "margin": "lg",
+          "wrap": true
+        }
+      ],
+      "backgroundColor": "#5C6BC0",
+      "paddingAll": "20px"
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "📱",
+                  "size": "md",
+                  "color": "#5C6BC0",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "MINI App",
+                  "size": "xxs",
+                  "color": "#5C6BC0",
+                  "align": "center",
+                  "weight": "bold",
+                  "margin": "xs",
+                  "wrap": true
+                }
+              ],
+              "flex": 1,
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "md",
+              "paddingAll": "8px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "👥",
+                  "size": "md",
+                  "color": "#5C6BC0",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "LINE OA",
+                  "size": "xxs",
+                  "color": "#5C6BC0",
+                  "align": "center",
+                  "weight": "bold",
+                  "margin": "xs",
+                  "wrap": true
+                }
+              ],
+              "flex": 1,
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "md",
+              "paddingAll": "8px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "🎁",
+                  "size": "md",
+                  "color": "#5C6BC0",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "DEMO",
+                  "size": "xxs",
+                  "color": "#5C6BC0",
+                  "align": "center",
+                  "weight": "bold",
+                  "margin": "xs",
+                  "wrap": true
+                }
+              ],
+              "flex": 1,
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "md",
+              "paddingAll": "8px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "📤",
+                  "size": "md",
+                  "color": "#5C6BC0",
+                  "align": "center"
+                },
+                {
+                  "type": "text",
+                  "text": "แชร์ต่อ",
+                  "size": "xxs",
+                  "color": "#5C6BC0",
+                  "align": "center",
+                  "weight": "bold",
+                  "margin": "xs",
+                  "wrap": true
+                }
+              ],
+              "flex": 1,
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "md",
+              "paddingAll": "8px"
+            }
+          ],
+          "spacing": "xs"
+        },
+        {
+          "type": "separator"
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "contents": [
+            {
+              "type": "text",
+              "text": "รายละเอียดกิจกรรม",
+              "size": "sm",
+              "color": "#333333",
+              "weight": "bold"
+            },
+            {
+              "type": "text",
+              "text": "{{DESCRIPTION}}",
+              "size": "sm",
+              "color": "#555555",
+              "wrap": true,
+              "lineSpacing": "4px"
+            }
+          ],
+          "spacing": "sm"
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "LINE OA",
+                  "size": "xxs",
+                  "color": "#5C6BC0"
+                }
+              ],
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "999px",
+              "paddingTop": "4px",
+              "paddingBottom": "4px",
+              "paddingStart": "10px",
+              "paddingEnd": "10px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "LIFF",
+                  "size": "xxs",
+                  "color": "#5C6BC0"
+                }
+              ],
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "999px",
+              "paddingTop": "4px",
+              "paddingBottom": "4px",
+              "paddingStart": "10px",
+              "paddingEnd": "10px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "Flex",
+                  "size": "xxs",
+                  "color": "#5C6BC0"
+                }
+              ],
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "999px",
+              "paddingTop": "4px",
+              "paddingBottom": "4px",
+              "paddingStart": "10px",
+              "paddingEnd": "10px"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "Developing",
+                  "size": "xxs",
+                  "color": "#5C6BC0"
+                }
+              ],
+              "backgroundColor": "#EEEFFF",
+              "cornerRadius": "999px",
+              "paddingTop": "4px",
+              "paddingBottom": "4px",
+              "paddingStart": "10px",
+              "paddingEnd": "10px"
+            }
+          ],
+          "spacing": "xs"
+        },
+        {
+          "type": "text",
+          "text": "ทดสอบเท่านั้น • ยังไม่เปิดสิทธิ์รางวัลจริง",
+          "size": "xxs",
+          "color": "#888888",
+          "wrap": true
+        }
+      ],
+      "paddingAll": "20px",
+      "spacing": "lg"
+    },
+    "footer": {
+      "type": "box",
+      "layout": "horizontal",
+      "contents": [
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "{{CTA}}",
+            "uri": "{{LIFF_URL}}"
+          },
+          "style": "primary",
+          "color": "#5C6BC0"
+        },
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "เพิ่มเพื่อน OA",
+            "uri": "{{OA_URL}}"
+          },
+          "style": "secondary"
+        }
+      ],
+      "spacing": "sm",
+      "paddingAll": "12px"
+    }
+  }
+}

@@ -1,0 +1,166 @@
+{
+  "type": "flex",
+  "altText": "{{TITLE}} • เปิดผ่าน LINE MINI App",
+  "contents": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "paddingAll": "0px",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "vertical",
+          "backgroundColor": "#1A1A1A",
+          "paddingAll": "20px",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "horizontal",
+              "justifyContent": "center",
+              "contents": [
+                {
+                  "type": "box",
+                  "layout": "vertical",
+                  "backgroundColor": "#FF4757",
+                  "cornerRadius": "sm",
+                  "paddingTop": "5px",
+                  "paddingBottom": "5px",
+                  "paddingStart": "16px",
+                  "paddingEnd": "16px",
+                  "contents": [
+                    {
+                      "type": "text",
+                      "text": "⚡ FLEX CAMPAIGN",
+                      "size": "sm",
+                      "color": "#FFFFFF",
+                      "weight": "bold",
+                      "align": "center"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "LINE MINI App • Developing",
+              "size": "xs",
+              "color": "#CCCCCC",
+              "align": "center",
+              "margin": "md"
+            },
+            {
+              "type": "text",
+              "text": "กิจกรรมตัวอย่าง • ยังไม่มีรางวัลจริง",
+              "size": "xs",
+              "color": "#AAAAAA",
+              "align": "center",
+              "wrap": true,
+              "margin": "sm"
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "contents": [
+            {
+              "type": "image",
+              "url": "{{IMAGE_URL}}",
+              "size": "full",
+              "aspectMode": "cover",
+              "aspectRatio": "16:9",
+              "action": {
+                "type": "uri",
+                "label": "เปิดกิจกรรม",
+                "uri": "{{LIFF_URL}}"
+              }
+            },
+            {
+              "type": "box",
+              "layout": "horizontal",
+              "position": "absolute",
+              "offsetTop": "12px",
+              "offsetEnd": "12px",
+              "contents": [
+                {
+                  "type": "box",
+                  "layout": "vertical",
+                  "backgroundColor": "#FF4757",
+                  "cornerRadius": "999px",
+                  "paddingTop": "6px",
+                  "paddingBottom": "6px",
+                  "paddingStart": "12px",
+                  "paddingEnd": "12px",
+                  "contents": [
+                    {
+                      "type": "text",
+                      "text": "TEST",
+                      "size": "xs",
+                      "color": "#FFFFFF",
+                      "weight": "bold",
+                      "align": "center"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "paddingAll": "16px",
+          "spacing": "sm",
+          "contents": [
+            {
+              "type": "text",
+              "text": "{{TITLE}}",
+              "weight": "bold",
+              "size": "lg",
+              "wrap": true
+            },
+            {
+              "type": "text",
+              "text": "{{DESCRIPTION}}",
+              "size": "sm",
+              "color": "#696969",
+              "wrap": true
+            },
+            {
+              "type": "separator",
+              "color": "#EFEFEF",
+              "margin": "md"
+            },
+            {
+              "type": "text",
+              "text": "เปิดหน้ากิจกรรม • ตรวจการเพิ่มเพื่อน LINE OA • แชร์ต่อได้ด้วยตนเอง",
+              "size": "xs",
+              "color": "#FF4757",
+              "wrap": true,
+              "margin": "md"
+            }
+          ]
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "paddingAll": "12px",
+      "contents": [
+        {
+          "type": "button",
+          "action": {
+            "type": "uri",
+            "label": "{{CTA}}",
+            "uri": "{{LIFF_URL}}"
+          },
+          "style": "primary",
+          "color": "#FF4757"
+        }
+      ]
+    }
+  }
+}

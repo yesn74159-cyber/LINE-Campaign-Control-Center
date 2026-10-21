@@ -1,0 +1,75 @@
+name: Staging verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Tests, security, typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:security
+      - run: npm run test:oa
+      - run: npm run typecheck
+      - run: npm run build
+
+  staging-integration:
+    name: PostgreSQL staging integration
+    # Enable explicitly with a repository variable after the disposable local
+    # staging credentials have been configured. Secrets are not evaluated in a
+    # job-level if expression.
+    if: vars.STAGING_INTEGRATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          POSTGRES_DB: line_campaign_ccc
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_campaign_ccc"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:${{ secrets.STAGING_DB_PASSWORD }}@127.0.0.1:55433/line_campaign_ccc
+      DB_TARGET: LOCAL_DEV
+      DB_SCHEMA: public
+      DB_EXTENSION_SCHEMA: public
+      DB_SSL_MODE: disable
+      DB_POOL_MODE: session
+      PERSISTENCE: postgres
+      APP_MODE: DRY_RUN
+      LINE_LIVE_ENABLED: 'false'
+      LINE_WEBHOOK_ENABLED: 'false'
+      STAGING_ADMIN_EMAIL: admin@staging.local
+      STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+      STAGING_VIEWER_EMAIL: viewer@staging.local
+      STAGING_VIEWER_PASSWORD: ${{ secrets.STAGING_VIEWER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run db:setup
+      - run: npm run test:integration
+      - run: npm run test:phase3
+      - run: npm run test:phase4a
+      - run: npm run test:phase4b

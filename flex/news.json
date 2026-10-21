@@ -1,0 +1,13 @@
+{
+  "type": "flex", "altText": "ประกาศข่าวสารจาก LINE MINI App",
+  "contents": {"type": "bubble",
+    "hero": {"type": "image", "url": "{{IMAGE_URL}}", "size": "full", "aspectRatio": "20:13", "aspectMode": "cover"},
+    "body": {"type": "box", "layout": "vertical", "spacing": "md", "contents": [
+      {"type": "text", "text": "{{TITLE}}", "weight": "bold", "size": "xl", "wrap": true},
+      {"type": "text", "text": "{{DESCRIPTION}}", "size": "sm", "wrap": true}
+    ]},
+    "footer": {"type": "box", "layout": "vertical", "contents": [
+      {"type": "button", "style": "primary", "color": "#06845A", "action": {"type": "uri", "label": "{{CTA}}", "uri": "{{LIFF_URL}}"}}
+    ]}
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "type": "flex",
+  "altText": "กิจกรรมพิเศษ LINE OA • เปิดผ่าน LINE MINI App",
+  "contents": {
+    "type": "bubble",
+    "size": "mega",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "text",
+          "text": "🔥 FLASH STYLE • DEMO",
+          "size": "sm",
+          "color": "#FFFFFF",
+          "weight": "bold"
+        },
+        {
+          "type": "text",
+          "text": "กิจกรรมพิเศษ LINE OA",
+          "size": "3xl",
+          "color": "#FFFFFF",
+          "weight": "bold",
+          "margin": "md",
+          "wrap": true
+        },
+        {
+          "type": "text",
+          "text": "ตัวอย่างข้อความกิจกรรมสำหรับทดสอบ LINE MINI App • ยังไม่มีส่วนลดหรือรางวัลจริง",
+          "size": "sm",
+          "color": "#FFFFFF",
+          "margin": "md",
+          "wrap": true
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "contents": [
+            {
+              "type": "text",
+              "text": "ตัวอย่างทดสอบ • ไม่มีส่วนลดหรือรางวัลจริง",
+              "size": "xxs",
+              "color": "#FFFFFF",
+              "wrap": true
+            }
+          ],
+          "margin": "lg"
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "contents": [
+            {
+              "type": "button",
+              "action": {
+                "type": "uri",
+                "label": "เปิดกิจกรรม",
+                "uri": "https://miniapp.line.me/2012104116-08P8b7g6?campaign=gradient&utm_source=owner_share"
+              },
+              "style": "primary",
+              "color": "#702C49"
+            }
+          ],
+          "margin": "lg"
+        }
+      ],
+      "background": {
+        "type": "linearGradient",
+        "angle": "45deg",
+        "startColor": "#FF6B6B",
+        "endColor": "#FFB400"
+      },
+      "paddingAll": "24px"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "LINE Campaign Control Center",
+  "short_name": "LINE CCC",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f7f5",
+  "theme_color": "#0d6b55",
+  "lang": "th",
+  "icons": []
+}

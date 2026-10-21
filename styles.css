@@ -1,0 +1,42 @@
+:root { font-family: system-ui, -apple-system, 'Noto Sans Thai', Tahoma, sans-serif; background: #f0f5f2; color:#15372d; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; line-height: 1.55; }
+button,input,textarea,select { font:inherit; }
+.hero-head { padding:19px 18px 26px; background:linear-gradient(150deg,#155944,#0c7b56); color:white; }
+.toprow {display:flex;gap:8px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.025em;}
+.brand-mark { color:#93f9bd; font-size:18px; line-height:1; }
+.env { margin-left:auto;background:#ffffff29;color:white;border-radius:99px;padding:4px 8px;font-size:10px; }
+h1{font-size:26px;line-height:1.2;margin:16px 0 5px;}h2{font-size:18px;line-height:1.4;margin:0 0 9px;}h3{font-size:15px;margin:0 0 5px;}p{margin:5px 0 11px;}
+.hero-head p{color:#daf4e9;font-size:14px;max-width:650px;}
+main{max-width:780px;margin:auto;padding:12px 12px 30px;}
+.notice{background:#e4f6ee;border:1px solid #b5d9c7;border-radius:12px;padding:11px 13px;margin:0 0 12px;font-size:13px;}
+.notice.amber{background:#fff5dd;border-color:#eed39a;color:#765217;}
+.view-tabs{display:flex;gap:5px;margin:0 0 11px;}
+.view-tabs button {flex:1;border:1px solid #bfd8c9;border-radius:9px;background:#fff;color:#1c604a;padding:10px 4px;font-weight:700;font-size:13px;min-height:42px;cursor:pointer;}
+.view-tabs button.current{background:#087f58;border-color:#087f58;color:#fff;}
+.view {display:none;}.view.current{display:block;}
+.card {background:#fff;border:1px solid #d1e3d9;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px #0c3a2310;margin-bottom:12px;}
+.card-inner{padding:15px;}.cover{display:block;width:100%;max-height:340px;aspect-ratio:20/11;object-fit:cover;background:#deeee6;}
+.campaign-card .card-inner{padding:13px 16px 16px;}
+.muted{color:#65796f;font-size:13px;}.tiny{font-size:12px;}.step{display:inline-flex;align-items:center;justify-content:center;width:27px;height:27px;background:#e4f8ee;border-radius:9px;color:#078157;margin-right:7px;font-size:14px;}
+.status{padding:9px 11px;border-radius:8px;font-size:13px;background:#eef3ef;border-left:4px solid #a9c0b2;overflow-wrap:anywhere;}
+.status.pass{background:#e7f8ed;border-left-color:#0fa76a;}.status.fail{background:#fff1ec;border-left-color:#dd6650;}.status.wait{background:#f5f6ee;border-left-color:#c8bd70;}
+.button-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+button.primary,button.secondary{font-weight:750;border-radius:10px;padding:12px 13px;min-height:46px;cursor:pointer;}
+button.primary{color:#fff;background:#06865d;border:1px solid #06865d;}
+button.secondary{color:#1e6951;background:#fff;border:1px solid #a6cab8;}
+button.full{width:100%;margin-top:7px;}
+button:disabled{cursor:not-allowed;opacity:.52;}
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible,a:focus-visible{outline:3px solid #e0af4e;outline-offset:2px;}
+.text-link{color:#0c7951;text-decoration:underline;text-underline-offset:3px;display:inline-block;font-size:12px;margin-top:10px;}
+label{display:block;font-size:13px;font-weight:700;margin:12px 0 5px;}
+select,textarea{border-radius:10px;border:1px solid #b8d1c2;background:#fff;color:#1c4234;padding:10px;display:block;width:100%;}
+textarea{font:12px/1.6 ui-monospace,Consolas,monospace;min-height:190px;resize:vertical;}
+.preview{margin-top:12px;display:flex;align-items:center;gap:12px;background:#f7faf8;border:1px solid #e2ece5;border-radius:12px;padding:9px;}.preview img{width:120px;height:90px;object-fit:cover;border-radius:8px;}.preview p{margin:0;}
+.qa{display:grid;grid-template-columns:1fr auto;gap:9px 12px;font-size:13px;}.qa dt{color:#65796f;}.qa dd{margin:0;font-weight:700;}
+pre{font:12px/1.5 ui-monospace,Consolas,monospace;max-height:230px;overflow:auto;background:#102921;color:#ddf8e6;padding:12px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere;}
+footer{padding:15px 3px;color:#7c9186;font-size:11px;text-align:center;}
+@media(min-width:650px){main{padding:20px 20px 40px;}.hero-head{padding:26px max(20px, calc((100vw - 740px)/2)) 32px;}h1{font-size:30px;}}
+
+input[type="text"]{border-radius:10px;border:1px solid #b8d1c2;background:white;color:#1c4234;padding:10px;display:block;width:100%;}
+textarea.simple-textarea{font:inherit;min-height:85px;}

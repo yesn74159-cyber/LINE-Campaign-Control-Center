@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f5945">
+  <meta name="description" content="กิจกรรม LINE MINI App — เพิ่มเพื่อน OA และแชร์กิจกรรมให้เพื่อนด้วยความยินยอม">
+  <title>LINE Campaign • MINI App</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
+  <script src="config.js" defer></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="hero-head">
+    <div class="toprow"><span class="brand-mark">●</span><span id="brand">LINE Campaign</span><span class="env" id="environment">DEVELOPING</span></div>
+    <h1 id="hero-title">กิจกรรมบน LINE</h1>
+    <p id="hero-desc">เปิดกิจกรรม เพิ่มเพื่อน OA และแชร์ด้วยบัญชี LINE ของคุณ</p>
+  </header>
+  <main>
+    <div id="mode-label" class="notice" role="status">กำลังตรวจการเชื่อมต่อ LINE MINI App...</div>
+    <div class="view-tabs" role="tablist" aria-label="หน้าระบบ">
+      <button type="button" id="tab-customer" class="current" data-view="customer" role="tab" aria-selected="true">หน้ากิจกรรม</button>
+      <button type="button" id="tab-studio" data-view="studio" role="tab" aria-selected="false">เลือก Flex / แชร์</button>
+      <button type="button" id="tab-qa" data-view="qa" role="tab" aria-selected="false">ผลทดสอบ</button>
+    </div>
+
+    <section id="view-customer" class="view current" aria-labelledby="customer-heading">
+      <article class="card campaign-card">
+        <img id="campaign-image" src="assets/coupon.png" alt="ภาพแคมเปญ" class="cover">
+        <div class="card-inner">
+          <h2 id="customer-heading">กิจกรรม LINE</h2>
+          <p id="campaign-desc">กำลังโหลดข้อมูลกิจกรรม...</p>
+          <p class="muted" id="source-note">—</p>
+        </div>
+      </article>
+      <article class="card card-inner">
+        <h2><span class="step">1</span> ตรวจสถานะ LINE</h2>
+        <p id="connection" class="status wait">กำลังเชื่อม LIFF SDK...</p>
+        <p id="login" class="status wait">กำลังตรวจบัญชี LINE...</p>
+        <div class="button-row">
+          <button type="button" id="login-btn" class="secondary" disabled>เข้าสู่ระบบ LINE</button>
+          <button type="button" id="profile-btn" class="secondary" disabled>ตรวจชื่อบัญชี</button>
+        </div>
+      </article>
+      <article class="card card-inner">
+        <h2><span class="step">2</span> เพิ่มเพื่อน LINE OA</h2>
+        <p class="muted">การเพิ่มเพื่อนเป็นความสมัครใจ และตรวจสถานะผ่าน LINE จริง</p>
+        <p id="friend-status" class="status wait">รอตรวจสถานะเพื่อน</p>
+        <div class="button-row">
+          <button type="button" id="friend-btn" class="primary" disabled>เพิ่มเพื่อน OA ใน MINI App</button>
+          <button type="button" id="check-btn" class="secondary" disabled>ตรวจอีกครั้ง</button>
+        </div>
+        <a id="oa-fallback" class="text-link" href="https://lin.ee/Ql6Lqk2" target="_blank" rel="noopener noreferrer">หากหน้าต่างเพิ่มเพื่อนใช้ไม่ได้ เปิดลิงก์ OA สำรอง</a>
+      </article>
+      <article class="card card-inner">
+        <h2><span class="step">3</span> รับสิทธิ์กิจกรรม</h2>
+        <p class="muted">เวอร์ชันนี้ตรวจสถานะเพื่อนจริง แต่ยังไม่ออกคูปองหรือสิทธิ์ถาวร จนกว่าจะเปิด Backend ยืนยันสิทธิ์</p>
+        <button id="claim-btn" type="button" class="secondary full" disabled>ตรวจเงื่อนไขเบื้องต้น</button>
+        <p id="claim-status" class="status wait">ยังไม่มีการออกสิทธิ์</p>
+      </article>
+      <article class="card card-inner">
+        <h2><span class="step">4</span> แชร์กิจกรรมให้เพื่อน</h2>
+        <p class="muted">เปิดรายชื่อผู้รับใน LINE ให้คุณเลือกเอง ระบบไม่อ่านรายชื่อเพื่อนและไม่ส่งอัตโนมัติ</p>
+        <button id="customer-share" type="button" class="primary full" disabled>แชร์ Flex ผ่าน LINE</button>
+        <p id="customer-share-status" class="status wait">รอให้ LIFF พร้อม</p>
+      </article>
+    </section>
+
+    <section id="view-studio" class="view" aria-labelledby="studio-heading">
+      <div class="notice amber"><strong>Studio แบบไม่มีระบบหลังบ้าน</strong> — แชร์จริงจากบัญชี LINE ของผู้กดได้ แต่ข้อมูลที่แก้ตรงนี้ยังไม่เผยแพร่ให้ลูกค้าทุกคนและไม่มีระบบสิทธิ์ Admin</div>
+      <article class="card card-inner">
+        <h2 id="studio-heading">เลือก Flex ที่ต้องการส่ง</h2>
+        <label for="campaign-select">เทมเพลต</label>
+        <select id="campaign-select"></select>
+        <div class="preview"><img id="studio-image" src="assets/coupon.png" alt="ภาพเทมเพลต"><div><h3 id="studio-title">—</h3><p id="studio-desc" class="muted">—</p></div></div>
+        <label for="send-mode">ผู้รับ</label>
+        <select id="send-mode"><option value="one">เลือก 1 แชท</option><option value="multiple">เลือกหลายแชทเอง</option></select>
+        <label for="send-type">รูปแบบแชร์</label>
+        <select id="send-type"><option value="flex">Flex Message</option><option value="text">ข้อความและลิงก์ MINI App</option></select>
+        <button type="button" id="studio-share" class="primary full" disabled>เปิด Share Target Picker</button>
+        <p id="studio-share-status" class="status wait">รอให้ LIFF พร้อม</p>
+        <p class="muted tiny">หาก LINE แสดง “เพื่อน 0” ให้เพิ่มเพื่อนทดสอบในบัญชี LINE ก่อน ระบบจะไม่สร้างรายชื่อจำลอง</p>
+      </article>
+      <article class="card card-inner">
+        <h2>แก้ข้อความ Flex แบบง่าย ไม่ต้องเขียน JSON</h2>
+        <p class="muted">แก้ชื่อแคมเปญ รายละเอียด และข้อความบนปุ่ม แล้วกดทดลองใช้ ระบบจำเฉพาะเบราว์เซอร์นี้ <strong>ยังไม่เผยแพร่ให้ลูกค้าทุกคน</strong></p>
+        <label for="simple-title">ชื่อโปรโมชั่น / หัวข้อ</label>
+        <input id="simple-title" type="text" maxlength="120" placeholder="ชื่อแคมเปญ">
+        <label for="simple-description">ข้อความรายละเอียด</label>
+        <textarea id="simple-description" class="simple-textarea" rows="3" maxlength="1200" placeholder="รายละเอียดแคมเปญ"></textarea>
+        <label for="simple-cta">ข้อความบนปุ่ม</label>
+        <input id="simple-cta" type="text" maxlength="40" placeholder="เปิดกิจกรรม">
+        <div class="button-row">
+          <button id="simple-apply" type="button" class="primary">ทดลองใช้ข้อความนี้</button>
+          <button id="simple-reset" type="button" class="secondary">คืนค่าเดิม</button>
+        </div>
+        <p id="simple-status" class="status wait">แก้ได้โดยไม่ต้องแตะ JSON</p>
+      </article>
+      <article class="card card-inner">
+        <h2>เตรียม Flex JSON ใหม่</h2>
+        <p class="muted">สำหรับเทมเพลตขั้นสูง: วาง Flex JSON เพื่อตรวจและทดลองแชร์ ส่วนข้อความทั่วไปใช้ช่องแก้แบบง่ายด้านบนได้</p>
+        <label for="flex-editor">Flex Message JSON (เฉพาะเทมเพลตที่เลือก)</label>
+        <textarea id="flex-editor" spellcheck="false" rows="9" placeholder="กำลังโหลด Flex JSON..."></textarea>
+        <div class="button-row">
+          <button id="validate-flex" type="button" class="secondary">ตรวจ Flex JSON</button>
+          <button id="reset-flex" type="button" class="secondary">คืนค่าเทมเพลต</button>
+          <button id="save-flex" type="button" class="secondary">บันทึกเฉพาะเครื่องนี้</button>
+          <button id="download-flex" type="button" class="secondary">ดาวน์โหลด JSON พร้อมใช้</button>
+        </div>
+        <p id="editor-status" class="status wait">ใช้ Placeholder: {{LIFF_URL}}, {{IMAGE_URL}}, {{TITLE}}, {{DESCRIPTION}}, {{CTA}}, {{OA_URL}}</p>
+      </article>
+    </section>
+
+    <section id="view-qa" class="view" aria-labelledby="qa-heading">
+      <article class="card card-inner">
+        <h2 id="qa-heading">ตรวจสอบการเชื่อมต่อ</h2>
+        <dl class="qa"><dt>LINE SDK</dt><dd id="qa-sdk">WAIT</dd><dt>LIFF Browser</dt><dd id="qa-client">WAIT</dd><dt>LINE Login</dt><dd id="qa-login">WAIT</dd><dt>OA Friendship</dt><dd id="qa-friend">WAIT</dd><dt>Share Target Picker</dt><dd id="qa-share">WAIT</dd><dt>รับสิทธิ์จริง</dt><dd>OFF — ต้องมี Backend</dd></dl>
+        <h3>Event log บนเครื่อง (ไม่เก็บ Token)</h3>
+        <pre id="log" aria-live="polite"></pre>
+        <button id="copy-log" type="button" class="secondary">คัดลอก Log</button>
+        <p class="muted tiny">ผลแชร์สำเร็จของ API ไม่ยืนยันว่าผู้รับอ่านข้อความ ต้องตรวจบนเครื่องผู้รับเพิ่มเติม</p>
+      </article>
+    </section>
+    <footer>LINE MINI App · DEVELOPING · ระบบทดสอบ API จริง ยังไม่เปิดการแจกสิทธิ์จริง</footer>
+  </main>
+</body>
+</html>

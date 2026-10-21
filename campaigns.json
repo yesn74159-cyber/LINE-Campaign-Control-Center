@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "defaultCampaign": "welcome",
+  "campaigns": [
+    {
+      "id": "welcome",
+      "name": "🎁 Welcome (ตัวอย่าง)",
+      "title": "ยินดีต้อนรับ",
+      "description": "เปิดกิจกรรมผ่าน LINE MINI App และเพิ่มเพื่อน LINE OA เพื่อรับข่าวสาร",
+      "image": "assets/coupon.png",
+      "cta": "เปิดกิจกรรม",
+      "friendTemplate": "coupon",
+      "flexFile": "flex/welcome.json",
+      "active": true
+    },
+    {
+      "id": "activity",
+      "name": "✨ Activity (ตัวอย่าง)",
+      "title": "กิจกรรมใหม่",
+      "description": "ติดตามกิจกรรมได้ใน LINE MINI App",
+      "image": "assets/activity.png",
+      "cta": "ดูกิจกรรม",
+      "friendTemplate": "event_reward",
+      "flexFile": "flex/activity.json",
+      "active": true
+    },
+    {
+      "id": "news",
+      "name": "📢 News (ตัวอย่าง)",
+      "title": "ประกาศข่าวสาร",
+      "description": "ติดตามข่าวสารจาก LINE OA",
+      "image": "assets/news.png",
+      "cta": "ดูรายละเอียด",
+      "friendTemplate": "news",
+      "flexFile": "flex/news.json",
+      "active": true
+    },
+    {
+      "id": "flash",
+      "name": "⚡ Flash Sale Style (ตัวอย่าง)",
+      "title": "กิจกรรมพิเศษสำหรับเพื่อน LINE OA",
+      "description": "เปิด MINI App เพื่อติดตามกิจกรรมและข่าวสารจาก LINE OA • ตัวอย่างทดสอบ ยังไม่มีการแจกสิทธิ์จริง",
+      "image": "assets/coupon.png",
+      "cta": "เปิดกิจกรรม",
+      "friendTemplate": "coupon",
+      "flexFile": "flex/flash.json",
+      "active": true
+    },
+    {
+      "id": "gradient",
+      "name": "🔥 Gradient Flash (แดง–ส้ม)",
+      "title": "กิจกรรมพิเศษ LINE OA",
+      "description": "ตัวอย่างข้อความกิจกรรมสำหรับทดสอบ LINE MINI App • ยังไม่มีส่วนลดหรือรางวัลจริง",
+      "image": "assets/activity.png",
+      "cta": "เปิดกิจกรรม",
+      "friendTemplate": "coupon",
+      "flexFile": "flex/gradient.json",
+      "active": true
+    },
+    {
+      "id": "purple",
+      "name": "💜 Purple Info Card (ม่วง)",
+      "title": "กิจกรรมและข่าวสารสมาชิก",
+      "description": "ติดตามกิจกรรมผ่าน LINE MINI App ตรวจสถานะเพื่อน LINE OA และแชร์ต่อให้เพื่อนด้วยตนเอง • ระบบทดสอบ",
+      "image": "assets/news.png",
+      "cta": "ดูรายละเอียด",
+      "friendTemplate": "news",
+      "flexFile": "flex/purple.json",
+      "active": true
+    },
+    {
+      "id": "profile",
+      "name": "🟢 LINE OA Profile Card (โปรไฟล์)",
+      "title": "LINE OA ใหม่ • ติดต่อเรา",
+      "description": "ติดตามข่าวสารและกิจกรรมผ่าน LINE OA และเปิด LINE MINI App เพื่อดูรายละเอียด • ตัวอย่างทดสอบ",
+      "image": "assets/news.png",
+      "cta": "เปิด MINI App",
+      "friendTemplate": "news",
+      "flexFile": "flex/profile.json",
+      "active": true
+    }
+  ]
+}
