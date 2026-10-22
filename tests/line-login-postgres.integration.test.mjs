@@ -64,6 +64,7 @@ test('migration 011 has scoped identity/session keys, encrypted one-time flows, 
 test('PostgreSQL migrations and LINE Login persistence are isolated to a disposable loopback database', async t => {
   const connectionString = requireDisposableLocalDatabaseUrl(process.env.LINE_LOGIN_TEST_DATABASE_URL);
   if (!connectionString) {
+    if (process.env.CI === 'true') throw new Error('LINE_LOGIN_TEST_DATABASE_URL is required in CI; refusing to skip PostgreSQL integration');
     t.skip('LINE_LOGIN_TEST_DATABASE_URL is not set; no database is touched');
     return;
   }

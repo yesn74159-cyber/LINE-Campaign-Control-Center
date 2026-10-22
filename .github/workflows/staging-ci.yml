@@ -21,25 +21,21 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run test:security
-      - run: npm run test:oa
-      - run: npm run test:live-contract
+      - run: npm run test:campaign-mock
+      - run: npm run test:line-login
       - run: npm run typecheck
       - run: npm run build
 
-  staging-integration:
-    name: PostgreSQL staging integration
-    # Enable explicitly with a repository variable after the disposable local
-    # staging credentials have been configured. Secrets are not evaluated in a
-    # job-level if expression.
-    if: vars.STAGING_INTEGRATION_ENABLED == 'true'
+  postgres-line-login:
+    name: Disposable PostgreSQL LINE Login integration
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: line_ccc
-          POSTGRES_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
-          POSTGRES_DB: line_campaign_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_line_login_qa_ci
         ports:
           - 55433:5432
         options: >-
@@ -48,20 +44,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://line_ccc:${{ secrets.STAGING_DB_PASSWORD }}@127.0.0.1:55433/line_campaign_ccc
-      DB_TARGET: LOCAL_DEV
-      DB_SCHEMA: public
-      DB_EXTENSION_SCHEMA: public
-      DB_SSL_MODE: disable
-      DB_POOL_MODE: session
-      PERSISTENCE: postgres
+      LINE_LOGIN_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55433/line_ccc_line_login_qa_ci
       APP_MODE: DRY_RUN
       LINE_LIVE_ENABLED: 'false'
       LINE_WEBHOOK_ENABLED: 'false'
-      STAGING_ADMIN_EMAIL: admin@staging.local
-      STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
-      STAGING_VIEWER_EMAIL: viewer@staging.local
-      STAGING_VIEWER_PASSWORD: ${{ secrets.STAGING_VIEWER_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,8 +55,4 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run db:setup
-      - run: npm run test:integration
-      - run: npm run test:phase3
-      - run: npm run test:phase4a
-      - run: npm run test:phase4b
+      - run: npm run test:line-login:postgres
