@@ -71,6 +71,12 @@ nav { margin-top: 26px; display: grid; gap: 5px; } nav button { border: 0; backg
 .staff-card .logo { margin: 0 0 22px; color: #173d32; }
 .staff-card h1 { margin: 14px 0 6px; font-size: 28px; letter-spacing: -.05em; }
 .staff-card input { display: block; width: 100%; border: 1px solid #d4e4dc; border-radius: 8px; padding: 11px; margin: 7px 0 16px; color: #23483e; }
+.line-login-button { min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 8px; background: #06c755; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+.line-login-button:hover:not(:disabled) { background: #05ad4b; }
+.line-login-button:focus-visible { outline: 3px solid #173d32; outline-offset: 3px; }
+.line-login-button:disabled { cursor: not-allowed; opacity: .55; }
+.member-session { margin: 18px 0; color: #23483e; text-align: center; }
+.staff-card .secondary.full { min-height: 46px; width: 100%; }
 .portal-status { color: #286b58; background: #effaf5; border: 1px solid #cdebdc; border-radius: 8px; padding: 10px; min-height: 40px; }
 .portal-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 18px 0; }
 .portal-steps span { color: #91a59e; border: 1px solid #dcebe5; border-radius: 8px; padding: 9px 5px; text-align: center; font-size: 10px; font-weight: 800; }

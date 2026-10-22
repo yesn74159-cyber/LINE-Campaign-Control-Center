@@ -25,6 +25,8 @@
     "test:security": "npm run build:api && node --test tests/security.test.mjs",
     "test:phase3": "npm run build:api && node --test tests/phase3.integration.test.mjs",
     "test:oa": "npm run build:api && node --test tests/oa-adapter.test.mjs",
+    "test:line-login": "npm run build:api && node --test tests/line-login.test.mjs",
+    "test:line-login:postgres": "npm run build:api && node --test tests/line-login-postgres.integration.test.mjs",
     "test:phase4a": "npm run build:api && node --test tests/phase4a.integration.test.mjs",
     "test:phase4b": "npm run build:api && node --test --test-concurrency=1 tests/phase4b.integration.test.mjs",
     "test:e2e": "node --test --test-concurrency=1 tests/e2e.visual.test.mjs",

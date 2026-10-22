@@ -89,6 +89,23 @@ test('mock store blocks cross-workspace identity ownership and last-owner lockou
   assert.throws(() => storeB.completeLogin({ state: expired.state, nonce: expired.nonce, idToken: { iss: expired.issuer, aud: expired.audience, exp: Math.floor(Date.now() / 1000) - 1, nonce: expired.nonce, sub: 'expired-subject', signature: 'MOCK_VALID' } }), /expired/);
 });
 
+test('LINE Login creates an isolated customer session and stores only an HMAC identity', () => {
+  const owner = { id: 'owner-line-customer', workspaceId: 'workspace-line-customer', email: 'owner-line@example.test', displayName: 'Owner', role: 'owner' };
+  const store = new CampaignMockStore(owner);
+  const staff = store.inviteMember({ email: 'referrer@example.test', displayName: 'Referrer', role: 'editor', actorId: owner.id, actorRole: 'owner', actorEmail: owner.email });
+  store.updateMember(staff.id, { status: 'ACTIVE', actorId: owner.id, actorRole: 'owner', actorEmail: owner.email });
+  const referral = store.createReferral({ staffId: staff.id, oaId: 'oa-customer-test', actorEmail: owner.email }, 'http://localhost:5173', new Set(['oa-customer-test']));
+  const context = store.resolveLineLoginMember(referral.plainToken);
+  const rawSubject = 'U-sensitive-line-subject-local-test';
+  const customerId = store.bindLineIdentity(rawSubject, context.referralId, 'LINE Customer', 'local-test-identity-hmac-key-with-enough-length');
+  assert.notEqual(customerId, staff.id);
+  assert.equal(JSON.stringify([...store.lineCustomers.values()]).includes(rawSubject), false);
+  const session = store.createLineMemberSession(customerId);
+  assert.deepEqual(store.getLineMemberSession(session.token), { id: customerId, displayName: 'LINE Customer', role: 'customer' });
+  store.revokeLineMemberSession(session.token);
+  assert.equal(store.getLineMemberSession(session.token), null);
+});
+
 test('referral tokens are unique and revoked or expired links cannot be used', async () => {
   const owner = { id: 'owner-c', workspaceId: 'workspace-c', email: 'c@example.test', displayName: 'C', role: 'owner' };
   const store = new CampaignMockStore(owner);

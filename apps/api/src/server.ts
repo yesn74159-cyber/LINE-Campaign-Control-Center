@@ -13,6 +13,8 @@ import { registerTenantAdminRoutes } from './tenantAdmin.js';
 import { registerOaConnectRoutes } from './lineOaConnect.js';
 import { CampaignMockStore } from './campaignMock.js';
 import { registerCampaignMockRoutes } from './campaignRoutes.js';
+import { createLineLoginConfig, registerLineLoginRoutes } from './lineLogin.js';
+import { PostgresLineLoginStore } from './lineLoginPostgresStore.js';
 
 type RequestWithUser = FastifyRequest & { user?: AdminUser; raw: FastifyRequest['raw'] & { rawBody?: string } };
 
@@ -70,9 +72,13 @@ export function buildApp(injectedRepository?: Repository) {
       role: 'owner'
     });
     registerCampaignMockRoutes(app, mockStore, authenticate, requireCsrf, workspaceId => repo.listOas(workspaceId));
+    registerLineLoginRoutes(app, mockStore, createLineLoginConfig());
   } else {
-    registerTenantAdminRoutes(app, selected.database?.pool || null, authenticate, requireCsrf);
-    registerOaConnectRoutes(app, selected.database?.pool || null, authenticate, requireCsrf);
+    const pool = selected.database?.pool;
+    if (!pool) throw new Error('PostgreSQL persistence is required for LINE Login routes');
+    registerTenantAdminRoutes(app, pool, authenticate, requireCsrf);
+    registerOaConnectRoutes(app, pool, authenticate, requireCsrf);
+    registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }
   app.get('/health', async () => ({ ok: true, mode: process.env.APP_MODE || 'DRY_RUN', persistence: repo.kind }));
   app.post<{ Body: { email: string; password: string } }>('/api/auth/login', { schema: { body: { type: 'object', required: ['email', 'password'], additionalProperties: false, properties: { email: { type: 'string', minLength: 3, maxLength: 320 }, password: { type: 'string', minLength: 12, maxLength: 200 } } } } }, async (request, reply) => {

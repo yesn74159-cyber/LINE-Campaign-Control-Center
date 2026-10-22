@@ -1,5 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { AdminRole } from './types.js';
+import { InvalidLineLoginReferralError } from './lineLoginStore.js';
+import type { CompleteLineLoginInput, LineLoginContext, LineLoginSession, StoredLineLoginFlow } from './lineLoginStore.js';
 
 export type MemberStatus = 'INVITED' | 'ACTIVE' | 'SUSPENDED';
 export type AttributionType = 'CLICK' | 'LOGIN' | 'FOLLOW_VERIFIED';
@@ -13,6 +15,7 @@ export type MockMember = {
   status: MemberStatus;
   createdAt: string;
 };
+type LineCustomer = { id: string; workspaceId: string; referralId: string; referrerMemberId: string; oaId: string; subjectHash: string; displayName: string };
 
 type Referral = {
   id: string;
@@ -53,8 +56,8 @@ const identityOwners = new Map<string, IdentityOwner>();
 function now() { return new Date(); }
 function id() { return randomBytes(16).toString('hex'); }
 function sha256(value: string) { return createHash('sha256').update(value, 'utf8').digest('hex'); }
-function mockIdentityHmac(subject: string) {
-  const key = process.env.MOCK_IDENTITY_HMAC_KEY || 'line-ccc-local-dry-run-identity-key';
+function mockIdentityHmac(subject: string, configuredKey?: string) {
+  const key = configuredKey || process.env.MOCK_IDENTITY_HMAC_KEY || 'line-ccc-local-dry-run-identity-key';
   return createHmac('sha256', key).update(subject, 'utf8').digest('hex');
 }
 function equalHash(left: string, right: string) {
@@ -77,9 +80,12 @@ export class CampaignMockStore {
   private workspaceName = 'LINE CCC Local Workspace';
   private readonly members: MockMember[];
   private readonly referrals: Referral[] = [];
+  private readonly lineCustomers = new Map<string, LineCustomer>();
+  private readonly durableMockLoginFlows = new Map<string, StoredLineLoginFlow>();
   private readonly events: AttributionEvent[] = [];
   private readonly audit: Array<{ id: string; action: string; actor: string; target: string; detail: string; createdAt: string }> = [];
   private readonly loginStates = new Map<string, LoginState>();
+  private readonly lineMemberSessions = new Map<string, { memberId: string; expiresAt: number; revoked: boolean }>();
   private readonly webhookReceipts = new Set<string>();
   private readonly verifiedSubjects = new Set<string>();
 
@@ -186,6 +192,91 @@ export class CampaignMockStore {
     const nonce = randomBytes(32).toString('base64url');
     this.loginStates.set(sha256(state), { stateHash: sha256(state), nonceHash: sha256(nonce), referralId: referral.id, staffId: referral.staffId, oaId: referral.oaId, expiresAt: Date.now() + 5 * 60 * 1000, used: false });
     return { state, nonce, issuer: 'https://access.line.me', audience: process.env.MOCK_LINE_LOGIN_AUDIENCE || 'line-ccc-local-login', expiresInSeconds: 300 };
+  }
+  resolveLineLoginMember(referralToken: string) {
+    let referral: Referral;
+    try { referral = this.resolveToken(referralToken); }
+    catch { throw new InvalidLineLoginReferralError('referral token is invalid or inactive'); }
+    const member = this.member(referral.staffId);
+    if (member.status !== 'ACTIVE') throw new InvalidLineLoginReferralError('referral member is not active');
+    return { workspaceId: this.workspaceId, oaId: referral.oaId, referralId: referral.id, referralToken };
+  }
+  saveLineLoginFlow(flow: StoredLineLoginFlow) {
+    if (flow.workspaceId !== this.workspaceId || this.durableMockLoginFlows.has(flow.stateHash)) throw new Error('LINE Login state already exists or is out of scope');
+    this.durableMockLoginFlows.set(flow.stateHash, { ...flow });
+  }
+  getLineLoginFlow(stateHash: string, browserBindingHash: string) {
+    const flow = this.durableMockLoginFlows.get(stateHash);
+    return flow && flow.browserBindingHash === browserBindingHash && flow.expiresAt.getTime() > Date.now() ? { ...flow } : null;
+  }
+  completeLineLogin(input: CompleteLineLoginInput): LineLoginSession | null {
+    const flow = this.getLineLoginFlow(input.stateHash, input.browserBindingHash);
+    if (!flow) return null;
+    const referral = this.referral(flow.referralId);
+    this.activeReferral(referral);
+    if (referral.oaId !== flow.oaId || flow.workspaceId !== this.workspaceId || !/^[a-f0-9]{64}$/.test(input.subjectHmac)) return null;
+    const identityKey = `${flow.oaId}:${input.subjectHmac}`;
+    let customer = this.lineCustomers.get(identityKey);
+    if (!customer) {
+      const referrer = this.member(referral.staffId);
+      if (referrer.status !== 'ACTIVE') return null;
+      customer = {
+        id: id(), workspaceId: this.workspaceId, referralId: referral.id,
+        referrerMemberId: referrer.id, oaId: referral.oaId, subjectHash: input.subjectHmac,
+        displayName: input.displayName.trim().slice(0, 120) || 'LINE Member'
+      };
+      this.lineCustomers.set(identityKey, customer);
+    }
+    this.durableMockLoginFlows.delete(input.stateHash);
+    const tokenHash = sha256(input.sessionToken);
+    this.lineMemberSessions.set(tokenHash, { memberId: customer.id, expiresAt: input.expiresAt.getTime(), revoked: false });
+    this.events.push({ id: id(), referralId: referral.id, workspaceId: this.workspaceId, staffId: referral.staffId, oaId: referral.oaId, type: 'LOGIN', occurredAt: now().toISOString() });
+    return { token: input.sessionToken, expiresAt: input.expiresAt, customer: { id: customer.id, displayName: customer.displayName, role: 'customer' } };
+  }
+  discardLineLoginState(stateHash: string, browserBindingHash: string) {
+    const flow = this.durableMockLoginFlows.get(stateHash);
+    if (flow?.browserBindingHash === browserBindingHash) this.durableMockLoginFlows.delete(stateHash);
+  }
+  bindLineIdentity(subject: string, referralId: string, displayName: string | undefined, identityHashKey: string) {
+    const referral = this.referral(referralId);
+    this.activeReferral(referral);
+    const member = this.member(referral.staffId);
+    if (member.status !== 'ACTIVE') throw new Error('referral member is not active');
+    const subjectHash = mockIdentityHmac(subject, identityHashKey);
+    const identityKey = `${referral.oaId}:${subjectHash}`;
+    const existing = this.lineCustomers.get(identityKey);
+    if (existing) return existing.id;
+    const customer: LineCustomer = {
+      id: id(), workspaceId: this.workspaceId, referralId: referral.id,
+      referrerMemberId: member.id, oaId: referral.oaId, subjectHash,
+      displayName: displayName?.trim().slice(0, 120) || 'LINE Member'
+    };
+    this.lineCustomers.set(identityKey, customer);
+    return customer.id;
+  }
+  createLineMemberSession(customerId: string) {
+    const customer = [...this.lineCustomers.values()].find(item => item.id === customerId && item.workspaceId === this.workspaceId);
+    if (!customer) throw new Error('LINE customer is not in this workspace');
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    this.lineMemberSessions.set(sha256(token), { memberId: customerId, expiresAt: expiresAt.getTime(), revoked: false });
+    return { token, expiresAt };
+  }
+  getLineMemberSession(token: string) {
+    const session = this.lineMemberSessions.get(sha256(token));
+    if (!session || session.revoked || session.expiresAt <= Date.now()) return null;
+    const customer = [...this.lineCustomers.values()].find(item => item.id === session.memberId && item.workspaceId === this.workspaceId);
+    if (!customer) return null;
+    return { id: customer.id, displayName: customer.displayName, role: 'customer' as const };
+  }
+  revokeLineMemberSession(token: string) {
+    const session = this.lineMemberSessions.get(sha256(token));
+    if (session) session.revoked = true;
+  }
+  cleanupExpiredLineLoginData() {
+    const nowMs = Date.now();
+    for (const [stateHash, flow] of this.durableMockLoginFlows) if (flow.expiresAt.getTime() <= nowMs) this.durableMockLoginFlows.delete(stateHash);
+    for (const [tokenHash, session] of this.lineMemberSessions) if (session.expiresAt <= nowMs || session.revoked) this.lineMemberSessions.delete(tokenHash);
   }
   completeLogin(input: { state: string; nonce: string; idToken: { iss: string; aud: string; exp: number; nonce: string; sub: string; signature?: string } }) {
     const stateHash = sha256(input.state);
