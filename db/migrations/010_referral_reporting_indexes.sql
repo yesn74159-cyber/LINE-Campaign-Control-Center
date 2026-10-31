@@ -7,6 +7,11 @@ create index if not exists referral_events_workspace_invite_type_time_idx
 create index if not exists staff_invite_links_workspace_staff_status_idx
   on staff_invite_links(workspace_id, admin_user_id, status, created_at desc);
 
+-- PostgreSQL requires a unique constraint on the exact referenced columns before
+-- a composite foreign key can be created. This index must precede line_login_states.
+create unique index if not exists staff_invite_links_id_workspace_uq
+  on staff_invite_links(id, workspace_id);
+
 -- One-time Login state. Only SHA-256 digests are persisted; raw state/nonce are
 -- returned to the local mock client and discarded after callback verification.
 create table if not exists line_login_states (

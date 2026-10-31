@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import { randomBytes } from 'node:crypto';
 import { hashPasswordSync } from './auth.js';
+import { accountSetupUrl, issueAccountToken } from './accountTokens.js';
 import type { AdminUser } from './types.js';
 
 type AdminRequest = FastifyRequest & { user?: AdminUser };
@@ -99,9 +100,43 @@ export function registerTenantAdminRoutes(
         );
         const member = inserted.rows[0];
         await client.query('insert into workspace_memberships(workspace_id,admin_user_id,status) values ($1,$2,\'INVITED\')', [user.workspaceId, member.id]);
+        const issued = await issueAccountToken(client, { workspaceId: user.workspaceId, adminUserId: String(member.id), purpose: 'INVITE', createdBy: user.email });
         await client.query("insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,$2,'MEMBER_INVITED','member',$3,$4::jsonb)", [user.workspaceId, user.email, member.id, JSON.stringify({ email, role: request.body.role })]);
+        await client.query("insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,$2,'ACCOUNT_INVITE_ISSUED','member',$3,$4::jsonb)", [user.workspaceId, user.email, member.id, JSON.stringify({ detail: `One-time invitation link issued; expires ${issued.expiresAt}` })]);
         await client.query('commit');
-        return reply.code(201).send({ ...member, status: 'INVITED' });
+        return reply.code(201).send({ ...member, status: 'INVITED', setupUrl: accountSetupUrl(issued.token), expiresAt: issued.expiresAt });
+      } catch (error) { await client.query('rollback').catch(() => undefined); return respondError(error, reply); }
+      finally { client.release(); }
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: { purpose: 'INVITE' | 'RESET' } }>(
+    '/api/workspace/members/:id/account-link',
+    {
+      preHandler: (request, reply) => allowed(request, reply, true),
+      schema: {
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } },
+        body: { type: 'object', required: ['purpose'], additionalProperties: false, properties: { purpose: { type: 'string', enum: ['INVITE', 'RESET'] } } }
+      }
+    },
+    async (request, reply) => {
+      const actor = (request as AdminRequest).user!;
+      const client = await pool!.connect();
+      try {
+        await client.query('begin');
+        const selected = await client.query("select u.id,u.email,u.role,m.status from workspace_memberships m join admin_users u on u.id=m.admin_user_id and u.workspace_id=m.workspace_id where m.workspace_id=$1 and u.id=$2 for update", [actor.workspaceId, request.params.id]);
+        if (!selected.rows[0]) { await client.query('rollback'); return reply.code(404).send({ error: 'member is not in this workspace' }); }
+        const target = selected.rows[0] as { id: string; email: string; role: string; status: string };
+        if (actor.role === 'admin' && target.role === 'owner') { await client.query('rollback'); return reply.code(403).send({ error: 'admin cannot issue links for the owner' }); }
+        if (request.body.purpose === 'INVITE' && target.status !== 'INVITED') { await client.query('rollback'); return reply.code(400).send({ error: 'invitation links are only for invited members' }); }
+        if (request.body.purpose === 'RESET' && target.status !== 'ACTIVE') { await client.query('rollback'); return reply.code(400).send({ error: 'password reset links are only for active members' }); }
+        const issued = await issueAccountToken(client, { workspaceId: actor.workspaceId, adminUserId: target.id, purpose: request.body.purpose, createdBy: actor.email });
+        await client.query(
+          "insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,$2,$3,'member',$4,$5::jsonb)",
+          [actor.workspaceId, actor.email, request.body.purpose === 'INVITE' ? 'ACCOUNT_INVITE_ISSUED' : 'ACCOUNT_RESET_ISSUED', target.id, JSON.stringify({ detail: `One-time ${request.body.purpose === 'INVITE' ? 'invitation' : 'password reset'} link issued; expires ${issued.expiresAt}` })]
+        );
+        await client.query('commit');
+        return { memberId: target.id, purpose: request.body.purpose, setupUrl: accountSetupUrl(issued.token), expiresAt: issued.expiresAt };
       } catch (error) { await client.query('rollback').catch(() => undefined); return respondError(error, reply); }
       finally { client.release(); }
     }
@@ -121,6 +156,7 @@ export function registerTenantAdminRoutes(
         if (actor.role === 'admin' && current.role === 'owner') { await client.query('rollback'); return reply.code(403).send({ error: 'admin cannot manage the owner' }); }
         if (actor.role === 'admin' && request.body.role === 'owner') { await client.query('rollback'); return reply.code(403).send({ error: 'admin cannot grant owner role' }); }
         if (current.id === actor.id && (request.body.status === 'SUSPENDED' || (request.body.role && request.body.role !== 'owner'))) { await client.query('rollback'); return reply.code(400).send({ error: 'you cannot suspend or lower your own access' }); }
+        if (request.body.status === 'ACTIVE' && current.status === 'INVITED') { await client.query('rollback'); return reply.code(400).send({ error: 'an invitation must be accepted through its one-time setup link' }); }
         const nextRole = request.body.role || current.role;
         const nextStatus = request.body.status || current.status;
         if (current.role === 'owner' && current.status === 'ACTIVE' && (nextRole !== 'owner' || nextStatus !== 'ACTIVE')) {
@@ -129,6 +165,7 @@ export function registerTenantAdminRoutes(
         }
         await client.query('update admin_users set role=$1 where id=$2 and workspace_id=$3', [nextRole, current.id, actor.workspaceId]);
         const updated = await client.query("update workspace_memberships set status=$1 where admin_user_id=$2 and workspace_id=$3 returning admin_user_id as id,status", [nextStatus, current.id, actor.workspaceId]);
+        if (nextStatus === 'SUSPENDED') await client.query('update auth_sessions set revoked_at=now() where user_id=$1 and revoked_at is null', [current.id]);
         await client.query("insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,$2,'MEMBER_UPDATED','member',$3,$4::jsonb)", [actor.workspaceId, actor.email, current.id, JSON.stringify({ role: nextRole, status: nextStatus })]);
         await client.query('commit');
         return { id: current.id, role: nextRole, status: updated.rows[0]?.status || nextStatus };

@@ -1,6 +1,7 @@
 export type DeliveryMode = 'DRY_RUN' | 'LIVE';
 export type JobStatus = 'DRAFT' | 'SCHEDULED' | 'PAUSED' | 'CLAIMED' | 'SENDING' | 'RETRYABLE' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'QUEUED' | 'CANCELED' | 'FAILED_FINAL';
 export type AdminRole = 'owner' | 'admin' | 'editor' | 'reviewer' | 'viewer';
+export type AccountTokenPurpose = 'INVITE' | 'RESET';
 export type OaConnectionStatus = 'NOT_CONFIGURED' | 'DRY_RUN_READY' | 'VALIDATION_FAILED' | 'LIVE_LOCKED';
 export type CredentialStatus = 'NOT_CONFIGURED' | 'REFERENCE_CONFIGURED' | 'VALIDATION_FAILED';
 export type CampaignApprovalStatus = 'DRAFT' | 'VALIDATED' | 'APPROVED';
@@ -70,6 +71,7 @@ export interface SchedulerJob {
   id: string;
   workspaceId?: string;
   campaignId: string;
+  campaignRevisionId?: string;
   oaId: string;
   scheduledAt: string;
   timeZone: string;
@@ -80,6 +82,20 @@ export interface SchedulerJob {
   idempotencyKey: string;
   lastError?: string;
   createdAt: string;
+}
+
+export interface DeliveryContext {
+  jobId: string;
+  workspaceId: string;
+  oaId: string;
+  campaignRevisionId: string;
+  recipientKey: string;
+  flexJson: Record<string, unknown>;
+}
+
+export interface QuotaReservation {
+  windowStartedAt: string | null;
+  counted: boolean;
 }
 
 export interface OutboxDelivery {

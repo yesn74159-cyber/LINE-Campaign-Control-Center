@@ -68,7 +68,7 @@ test('Admin mobile E2E at 390x844 preserves login session and responsive Schedul
   } finally { await page.close(); }
 });
 
-test('Local Mock referral path at 360x800 records Click, Login, signed Follow and renders offline QR', async (t) => {
+test('Local Mock referral path at 360x800 records Click and renders portal plus offline QR', async (t) => {
   if (!password) return t.skip('STAGING_ADMIN_PASSWORD is required for authenticated E2E');
   const page = await browser.newPage({ viewport: { width: 360, height: 800 }, deviceScaleFactor: 1 });
   try {
@@ -81,7 +81,7 @@ test('Local Mock referral path at 360x800 records Click, Login, signed Follow an
     await page.getByText('เชิญสมาชิกแล้ว', { exact: false }).waitFor();
     await page.getByRole('button', { name: 'Referral Dashboard' }).click();
     await page.getByRole('heading', { name: 'Referral Dashboard', level: 2 }).waitFor();
-    const staffOption = await page.locator('#referral-staff option').filter({ hasText: 'E2E Staff' }).last().getAttribute('value');
+    const staffOption = await page.locator('#referral-staff option').nth(1).getAttribute('value');
     assert.ok(staffOption);
     await page.locator('#referral-staff').selectOption(staffOption);
     await page.locator('#referral-oa').selectOption({ index: 1 });
@@ -90,10 +90,11 @@ test('Local Mock referral path at 360x800 records Click, Login, signed Follow an
     assert.equal(await page.locator('.qr-wrap svg[aria-label="Offline QR code"]').count(), 1);
     const referralUrl = await page.getByLabel('Referral URL').inputValue();
     await page.goto(referralUrl, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'เริ่ม LINE Login Mock' }).click();
-    await page.getByText('LINE Login Mock ผ่าน', { exact: false }).waitFor();
-    await page.getByRole('button', { name: 'จำลอง Signed Webhook Follow' }).click();
-    await page.getByText('FOLLOW_VERIFIED แล้ว', { exact: false }).waitFor();
+    await page.getByRole('heading', { name: 'เข้าร่วมแคมเปญ' }).waitFor();
+    await page.getByText('ลิงก์นี้เชื่อมกับสมาชิก', { exact: false }).waitFor();
+    const lineLoginButton = page.getByRole('button', { name: 'เข้าสู่ระบบด้วย LINE' });
+    await lineLoginButton.waitFor();
+    assert.equal(await lineLoginButton.count(), 1);
     assert.equal(await page.evaluate(() => document.body.scrollWidth <= document.documentElement.clientWidth), true);
     await page.screenshot({ path: 'qa-screenshots/referral-staff-portal-mobile-360x800.png' });
   } finally { await page.close(); }

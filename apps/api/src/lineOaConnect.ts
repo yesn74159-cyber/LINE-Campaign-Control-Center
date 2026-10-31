@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import type { AdminUser } from './types.js';
+import { createFixedWindowLimiter } from './security.js';
 
 type BotInfo = { basicId: string; displayName: string };
 type Caller = FastifyRequest & { user?: AdminUser };
@@ -36,6 +37,26 @@ export function openOaSecret(sealed: string, workspaceId: string, oaId: string, 
   return Buffer.concat([decipher.update(Buffer.from(parts[3], 'base64url')), decipher.final()]).toString('utf8');
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Decrypts the OA access token at send time. The lookup is bound to the exact
+ * workspace/OA pair; there is no environment or cross-OA fallback.
+ */
+export async function resolveOaAccessToken(pool: Pool, input: { workspaceId: string; oaId: string; key: Buffer }): Promise<Buffer | null> {
+  if (!UUID_PATTERN.test(input.workspaceId) || !UUID_PATTERN.test(input.oaId)) return null;
+  const result = await pool.query<{ token_sealed: string | null }>(
+    'select v.token_sealed from oa_credential_vault v ' +
+    'join oa_integrations oa on oa.id=v.oa_integration_id and oa.workspace_id=v.workspace_id ' +
+    "where v.workspace_id=$1 and v.oa_integration_id=$2 and oa.environment='STAGING'",
+    [input.workspaceId, input.oaId]
+  );
+  const sealed = result.rows[0]?.token_sealed;
+  if (!sealed) return null;
+  const token = openOaSecret(sealed, input.workspaceId, input.oaId, 'token', input.key);
+  return Buffer.from(token, 'utf8');
+}
+
 // Fixed read-only endpoint: never sends a LINE message or activates a webhook.
 export async function checkLineBotToken(token: string, transport: FetchFn = fetch): Promise<BotInfo> {
   if (!token || token.length > 4096 || /[\r\n]/.test(token)) throw new Error('invalid access token');
@@ -66,6 +87,7 @@ export function registerOaConnectRoutes(
   requireCsrf: (request: FastifyRequest, reply: FastifyReply) => unknown,
   checkToken: (token: string) => Promise<BotInfo> = checkLineBotToken
 ) {
+  const connectLimiter = createFixedWindowLimiter(10, 60 * 60 * 1000);
   async function authorizeOwner(request: FastifyRequest, reply: FastifyReply) {
     if (!pool) return reply.code(503).send({ error: 'PostgreSQL is required' });
     const auth = await requireUser(request, reply);
@@ -101,6 +123,7 @@ export function registerOaConnectRoutes(
       try { key = vaultKey(); }
       catch { return reply.code(503).send({ error: 'secure credential storage is not configured' }); }
       const user = (request as Caller).user!;
+      if (!connectLimiter.take(user.workspaceId)) return reply.code(429).send({ error: 'too many LINE OA connection attempts; try again later' });
       const { providerId, messagingChannelId, channelAccessToken, channelSecret } = request.body;
       let info: BotInfo;
       try { info = await checkToken(channelAccessToken); }
@@ -164,7 +187,7 @@ export function registerOaConnectRoutes(
     const result = await pool!.query(
       'select oa.id as "oaId",oa.display_name as "displayName",oa.basic_id as "basicId", ' +
       'v.access_token_checked_at as "accessTokenCheckedAt", (v.oa_integration_id is not null) as "storedEncrypted", ' +
-      'c.status as "channelStatus" from oa_integrations oa ' +
+      'c.status as "channelStatus", c.verified_at as "verifiedAt" from oa_integrations oa ' +
       'left join oa_credential_vault v on v.workspace_id=oa.workspace_id and v.oa_integration_id=oa.id ' +
       'left join workspace_oa_channels c on c.workspace_id=oa.workspace_id and c.oa_integration_id=oa.id ' +
       'where oa.workspace_id=$1 order by oa.created_at',

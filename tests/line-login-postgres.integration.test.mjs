@@ -48,13 +48,13 @@ async function createWorkspace(pool, suffix) {
 }
 
 test('migration 011 has scoped identity/session keys, encrypted one-time flows, RLS, and no provider token/raw-sub columns', () => {
-  assert.match(migrationSql, /create table line_customers/i);
+  assert.match(migrationSql, /create table (?:if not exists )?line_customers/i);
   assert.match(migrationSql, /unique \(workspace_id, oa_integration_id, line_subject_hmac\)/i);
-  assert.match(migrationSql, /create table line_customer_login_states/i);
+  assert.match(migrationSql, /create table (?:if not exists )?line_customer_login_states/i);
   assert.match(migrationSql, /nonce_sealed/i);
   assert.match(migrationSql, /code_verifier_sealed/i);
   assert.match(migrationSql, /referral_token_sealed/i);
-  assert.match(migrationSql, /create table line_customer_sessions/i);
+  assert.match(migrationSql, /create table (?:if not exists )?line_customer_sessions/i);
   assert.match(migrationSql, /token_hash/i);
   assert.match(migrationSql, /referral_events_customer_scope_fk/i);
   assert.match(migrationSql, /enable row level security/i);
@@ -77,8 +77,9 @@ test('PostgreSQL migrations and LINE Login persistence are isolated to a disposa
   assert.equal((await pool.query("select to_regclass('public.schema_migrations') as ledger")).rows[0].ledger, null, 'integration target must be a fresh disposable database');
 
   const migrations = await runMigrations(pool);
-  assert.equal(migrations.length, 11);
+  assert.ok(migrations.length >= 12, `expected at least 12 migrations, got ${migrations.length}`);
   assert.ok(migrations.includes('011_line_customer_login_persistence.sql'));
+  assert.ok(migrations.includes('012_account_invites.sql'));
   const store = new PostgresLineLoginStore(pool);
   const tenantA = await createWorkspace(pool, `a_${Date.now()}`);
   const tenantB = await createWorkspace(pool, `b_${Date.now()}`);

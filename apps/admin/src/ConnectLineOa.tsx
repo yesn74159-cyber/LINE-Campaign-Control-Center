@@ -3,8 +3,13 @@ import { apiUrl } from './apiClient.js';
 
 type Connection = {
   oaId: string; displayName: string; basicId: string;
-  accessTokenCheckedAt: string | null; storedEncrypted: boolean; channelStatus: string | null;
+  accessTokenCheckedAt: string | null; storedEncrypted: boolean; channelStatus: string | null; verifiedAt: string | null;
 };
+function webhookLabel(status: string | null, verifiedAt: string | null) {
+  if (status === 'VERIFIED') return verifiedAt ? 'ยืนยัน signed webhook แล้ว · ' + new Date(verifiedAt).toLocaleString('th-TH') : 'ยืนยัน signed webhook แล้ว';
+  if (status === 'VERIFY_PENDING') return 'รอ signed webhook แรก';
+  return status || 'LIVE DISABLED';
+}
 async function request<T>(url: string): Promise<T> {
   const response = await fetch(apiUrl(url), { credentials: 'include', cache: 'no-store' });
   if (!response.ok) {
@@ -39,7 +44,7 @@ export default function ConnectLineOa({ isOwner }: { isOwner: boolean }) {
       <tbody>{connections.map(row=><tr key={row.oaId}>
         <td>{row.displayName} ({row.basicId})</td>
         <td>{row.storedEncrypted && row.accessTokenCheckedAt ? 'มี reference ฝั่ง server' : 'Mock / ไม่ตั้งค่า'}</td>
-        <td>{row.channelStatus || 'LIVE DISABLED'}</td><td>ปิด</td>
+        <td>{webhookLabel(row.channelStatus, row.verifiedAt)}</td><td>ปิด</td>
       </tr>)}</tbody>
     </table></div>
   </section>;

@@ -3,7 +3,7 @@ import type { AdminRole, AdminUser, OaIntegration } from './types.js';
 import { CampaignMockStore, isValidMockWebhookSignature } from './campaignMock.js';
 
 type RequestWithUser = FastifyRequest & { user?: AdminUser; raw: FastifyRequest['raw'] & { rawBody?: string } };
-type OaLike = Pick<OaIntegration, 'id' | 'displayName' | 'providerId' | 'basicId'>;
+type OaLike = Pick<OaIntegration, 'id' | 'displayName' | 'providerId' | 'basicId' | 'enabled'>;
 
 export function registerCampaignMockRoutes(
   app: FastifyInstance,
@@ -41,9 +41,10 @@ export function registerCampaignMockRoutes(
   app.patch<{ Params: { id: string }; Body: { role?: AdminRole; status?: 'INVITED' | 'ACTIVE' | 'SUSPENDED' } }>('/api/workspace/members/:id', { preHandler: manager }, async (request, reply) => {
     try { return store.updateMember(request.params.id, { ...request.body, actorId: user(request).id, actorRole: user(request).role, actorEmail: user(request).email }); } catch (error) { return fail(reply, error); }
   });
-  app.get('/api/workspace/oa-channels', { preHandler: manager }, async () => ({ channels: (await safeOas()).map(oa => ({ oaId: oa.id, displayName: oa.displayName, messagingChannelId: null, loginChannelId: null, lineProviderId: oa.providerId, status: 'DRY_RUN_READY' })) }));
+  app.get('/api/workspace/oa-channels', { preHandler: manager }, async () => ({ channels: (await safeOas()).map(oa => ({ oaId: oa.id, displayName: oa.displayName, messagingChannelId: null, loginChannelId: null, lineProviderId: oa.providerId, enabled: oa.enabled, status: 'DRY_RUN_READY' })) }));
   app.get('/api/workspace/oa-connect/status', { preHandler: manager }, async () => ({ connections: (await safeOas()).map(oa => ({ oaId: oa.id, displayName: oa.displayName, basicId: oa.basicId, accessTokenCheckedAt: null, storedEncrypted: false, channelStatus: 'DRY_RUN_READY' })) }));
 
+  app.get('/api/referrals/staff', { preHandler: reader }, async () => ({ staff: store.listMembers().map(item => ({ id: item.id, displayName: item.displayName, email: item.email, active: item.status === 'ACTIVE' })) }));
   app.get<{ Querystring: { staffId?: string; oaId?: string } }>('/api/referrals', { preHandler: reader }, async request => ({ referrals: store.listReferrals(origin(), request.query) }));
   app.post<{ Body: { staffId: string; oaId: string; expiresAt?: string } }>('/api/referrals', { preHandler: manager }, async (request, reply) => {
     try { return reply.code(201).send(store.createReferral({ ...request.body, actorEmail: user(request).email }, origin(), await validOaIds())); } catch (error) { return fail(reply, error); }
@@ -53,7 +54,6 @@ export function registerCampaignMockRoutes(
   });
   app.get<{ Querystring: { staffId?: string; oaId?: string; from?: string; to?: string } }>('/api/referral-dashboard', { preHandler: reader }, async request => ({ mode: 'DRY_RUN', rows: store.dashboard(request.query) }));
   app.get('/api/referral-events', { preHandler: reader }, async () => ({ events: store.listEvents() }));
-  app.get('/api/audit', { preHandler: reader }, async () => ({ events: store.listAudit() }));
 
   app.post<{ Params: { token: string } }>('/api/referrals/:token/click', async (request, reply) => {
     try { return store.recordClick(request.params.token); } catch (error) { return fail(reply, error); }

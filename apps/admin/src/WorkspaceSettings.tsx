@@ -10,6 +10,9 @@ type Channel = {
   lineProviderId: string | null; status: string;
 };
 type Session = { role: string; email: string };
+type SetupLink = { url: string; expiresAt: string; email: string; kind: string };
+
+const isPersistedMemberId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 async function workspaceRequest<T>(url: string, method = 'GET', body?: object): Promise<T> {
   const csrf = document.cookie.split('; ').find(item => item.startsWith('ccc_csrf='))?.slice('ccc_csrf='.length);
@@ -39,6 +42,7 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState('viewer');
   const [message, setMessage] = useState('');
+  const [setupLink, setSetupLink] = useState<SetupLink | null>(null);
   const [saving, setSaving] = useState(false);
   const isOwner = session.role === 'owner';
 
@@ -100,13 +104,32 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
     if (!isOwner && session.role !== 'admin') return;
     setSaving(true);
     try {
-      await workspaceRequest('/api/workspace/members', 'POST', { email: inviteEmail, displayName: inviteName, role: inviteRole });
+      const invitedEmail = inviteEmail;
+      const result = await workspaceRequest<Member & { setupUrl?: string; expiresAt?: string }>('/api/workspace/members', 'POST', { email: inviteEmail, displayName: inviteName, role: inviteRole });
       setInviteEmail(''); setInviteName(''); setInviteRole('viewer');
-      setMessage('เชิญสมาชิกแล้ว — ส่งลิงก์ LINE Login Mock ให้สมาชิกได้จาก Referral Dashboard');
-      const result = await workspaceRequest<{ members: Member[] }>('/api/workspace/members');
-      setMembers(result.members);
+      if (result.setupUrl) {
+        setSetupLink({ url: result.setupUrl, expiresAt: result.expiresAt || '', email: invitedEmail, kind: 'ลิงก์เชิญ' });
+        setMessage('เชิญสมาชิกแล้ว — ลิงก์ตั้งรหัสผ่านใช้ได้ครั้งเดียวและแสดงเพียงรอบนี้');
+      } else setMessage('เชิญสมาชิกแล้ว (mock mode ไม่มีลิงก์ตั้งรหัสผ่านจริง)');
+      const resultMembers = await workspaceRequest<{ members: Member[] }>('/api/workspace/members');
+      setMembers(resultMembers.members);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'เชิญสมาชิกไม่สำเร็จ'); }
     finally { setSaving(false); }
+  }
+
+  async function issueAccountLink(member: Member, purpose: 'INVITE' | 'RESET') {
+    setSaving(true);
+    try {
+      const result = await workspaceRequest<{ setupUrl: string; expiresAt: string }>(`/api/workspace/members/${encodeURIComponent(member.id)}/account-link`, 'POST', { purpose });
+      setSetupLink({ url: result.setupUrl, expiresAt: result.expiresAt, email: member.email, kind: purpose === 'INVITE' ? 'ลิงก์เชิญ' : 'ลิงก์รีเซ็ตรหัสผ่าน' });
+      setMessage(purpose === 'INVITE' ? 'สร้างลิงก์เชิญใหม่แล้ว — ส่งให้สมาชิกครั้งเดียว' : 'สร้างลิงก์รีเซ็ตรหัสผ่านแล้ว — ส่งให้สมาชิกครั้งเดียว');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'สร้างลิงก์ไม่สำเร็จ'); }
+    finally { setSaving(false); }
+  }
+
+  async function copySetupLink(url: string) {
+    try { await navigator.clipboard.writeText(url); setMessage('คัดลอกลิงก์แล้ว — ส่งให้สมาชิกผ่านช่องทางที่ปลอดภัย'); }
+    catch { setMessage('คัดลอกอัตโนมัติไม่สำเร็จ กรุณาเลือกข้อความในช่องลิงก์แล้วคัดลอกเอง'); }
   }
 
   async function updateMember(member: Member, change: { role?: string; status?: string }) {
@@ -166,10 +189,20 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
            <tr key={member.id}><td>{member.displayName}</td><td>{member.email}</td>
              <td><select aria-label={`Role ${member.email}`} value={member.role} disabled={saving || member.id === (session as Session & { id?: string }).id} onChange={e => void updateMember(member, { role: e.target.value })}>{['owner','admin','editor','reviewer','viewer'].map(role => <option value={role} key={role}>{role}</option>)}</select></td>
              <td><span className={`tag ${member.status === 'ACTIVE' ? 'success' : member.status === 'SUSPENDED' ? 'paused' : 'dry'}`}>{member.status}</span></td>
-             <td>{member.status === 'SUSPENDED' ? <button className="mini-btn" disabled={saving} onClick={() => void updateMember(member, { status: 'ACTIVE' })}>Reactivate</button> : member.status !== 'ACTIVE' ? <button className="mini-btn" disabled={saving} onClick={() => void updateMember(member, { status: 'ACTIVE' })}>Activate</button> : <button className="danger-btn" disabled={saving || member.id === (session as Session & { id?: string }).id} onClick={() => void updateMember(member, { status: 'SUSPENDED' })}>Suspend</button>}</td></tr>
+             <td>{member.status === 'INVITED' ? (isPersistedMemberId(member.id) ? <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'INVITE')}>คัดลอกลิงก์เชิญ</button> : <span className="tag dry">MOCK</span>) : member.status === 'SUSPENDED' ? <button className="mini-btn" disabled={saving} onClick={() => void updateMember(member, { status: 'ACTIVE' })}>Reactivate</button> : <>{isPersistedMemberId(member.id) && <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'RESET')}>ส่งลิงก์รีเซ็ต</button>}<button className="danger-btn" disabled={saving || member.id === (session as Session & { id?: string }).id} onClick={() => void updateMember(member, { status: 'SUSPENDED' })}>Suspend</button></>}</td></tr>
          )}</tbody>
        </table></div>
     </section>
+    {setupLink && <section className="panel" role="status">
+      <p className="eyebrow green">ONE-TIME LINK</p>
+      <h3>{setupLink.kind} · {setupLink.email}</h3>
+      <p>ลิงก์นี้ใช้ได้ครั้งเดียวและหมดอายุ {setupLink.expiresAt ? new Date(setupLink.expiresAt).toLocaleString('th-TH') : '-'} — ระบบไม่เก็บลิงก์นี้ไว้แสดงซ้ำ</p>
+      <input readOnly value={setupLink.url} aria-label="ลิงก์ตั้งรหัสผ่าน" onFocus={e => e.currentTarget.select()} />
+      <div className="form-actions">
+        <button className="primary" onClick={() => void copySetupLink(setupLink.url)}>คัดลอกลิงก์</button>
+        <button className="secondary" onClick={() => setSetupLink(null)}>ซ่อนลิงก์</button>
+      </div>
+    </section>}
     <section className="panel">
       <p className="eyebrow green">CHANNEL METADATA</p><h3>LINE OA Connections</h3>
       <p>เลือก OA ที่เพิ่มไว้ในเมนู LINE OA เพื่อบันทึก Channel ID และ Provider ID</p>

@@ -57,7 +57,7 @@ export function assertControlReason(value: unknown) {
 export function can(role: AdminRole, action: 'read' | 'write' | 'approve' | 'manage_oa' | 'manage_users') {
   if (role === 'owner' || role === 'admin') return true;
   if (action === 'read') return true;
-  if (action === 'write') return role === 'editor' || role === 'reviewer';
+  if (action === 'write') return role === 'editor';
   if (action === 'approve') return role === 'reviewer';
   return false;
 }

@@ -93,15 +93,16 @@ export class PostgresLineLoginStore implements LineLoginStore {
         return null;
       }
       const context = flow.rows[0];
-      const customer = await client.query<{ id: string }>(
+      const customer = await client.query<{ id: string; attributed_invite_link_id: string }>(
         `insert into line_customers(workspace_id,oa_integration_id,attributed_invite_link_id,line_subject_hmac,display_name)
          values ($1,$2,$3,$4,$5)
          on conflict (workspace_id,oa_integration_id,line_subject_hmac)
          do update set display_name=excluded.display_name, updated_at=now()
-         returning id`,
+         returning id, attributed_invite_link_id`,
         [context.workspace_id, context.oa_integration_id, context.invite_link_id, input.subjectHmac, input.displayName]
       );
       const customerId = String(customer.rows[0].id);
+      const attributedInviteLinkId = String(customer.rows[0].attributed_invite_link_id);
       await client.query(
         `update line_customer_login_states set claimed_at=now(), completed_at=now()
          where state_hash=$1 and claimed_at is null`,
@@ -115,7 +116,7 @@ export class PostgresLineLoginStore implements LineLoginStore {
       await client.query(
         `insert into referral_attribution_events(workspace_id,invite_link_id,oa_integration_id,event_type,customer_id)
          values ($1,$2,$3,'LOGIN',$4)`,
-        [context.workspace_id, context.invite_link_id, context.oa_integration_id, customerId]
+        [context.workspace_id, attributedInviteLinkId, context.oa_integration_id, customerId]
       );
       await client.query('commit');
       return {

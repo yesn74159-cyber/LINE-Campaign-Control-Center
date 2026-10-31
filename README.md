@@ -54,14 +54,13 @@ Flex เดิมทั้ง 7 แบบใน [campaigns.json](./campaigns.jso
 ต้องใช้ Node.js 20+ และ Docker Desktop:
 
 ```powershell
-$env:POSTGRES_USER='line_ccc'
-$env:POSTGRES_PASSWORD = Read-Host 'Enter the existing local staging PostgreSQL password'
-$env:POSTGRES_DB='line_campaign_ccc'
-docker compose -f docker-compose.staging.yml up -d
+Copy-Item deploy/staging.env.example .env.staging
+# แก้ .env.staging ในเครื่องเท่านั้น: POSTGRES_PASSWORD, DATABASE_URL, STAGING_*_PASSWORD
+docker compose --env-file .env.staging -f docker-compose.staging.yml up -d postgres
 
 $env:DB_TARGET='LOCAL_DEV'
 $env:DB_SCHEMA='public'
-# Set LOCAL_DATABASE_URL or DATABASE_URL through a local secret store; never write the value here.
+# ตั้ง DATABASE_URL ผ่าน process environment หรือ secret store ก่อนรัน db:setup
 $env:STAGING_ADMIN_EMAIL='admin@staging.local'
 $env:STAGING_ADMIN_PASSWORD='ใส่รหัสผ่านทดสอบอย่างน้อย 12 ตัวอักษร'
 $env:STAGING_VIEWER_EMAIL='viewer@staging.local'
@@ -73,6 +72,22 @@ npm run dev:staging
 เปิด Admin ที่ `http://127.0.0.1:5173/` และ API health ที่ `http://127.0.0.1:8787/health` จากนั้น login ด้วย admin email/password ที่ตั้งใน environment เท่านั้น
 
 สำหรับ mock-only local UI ให้ตั้ง `MEMORY_ADMIN_PASSWORD` เป็นค่าทดสอบเฉพาะเครื่องก่อนใช้ `npm run dev` ซึ่งตั้ง `PERSISTENCE=memory` อย่างชัดเจน; ห้ามใช้โหมดนี้เป็น Staging acceptance และห้ามใช้ credential ของ Production/Cloud
+
+สำหรับ stack เต็ม (Caddy → Admin/Nginx → API, worker แบบ private) ใช้ `docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --build` หลังตั้ง `STAGING_DOMAIN`/`CADDY_TLS`; รายละเอียดและ runbook อยู่ที่ [docs/PHASE5E_STAGING_HARDENING.md](./docs/PHASE5E_STAGING_HARDENING.md)
+
+## Vault rotation และ alert delivery
+
+```powershell
+# dry-run ก่อนเสมอ แล้วค่อย --confirm
+$env:LINE_CREDENTIAL_ENCRYPTION_KEY_NEW='<base64 32 bytes>'
+npm run vault:rotate
+npm run vault:rotate -- --confirm
+
+# แจ้งเตือนเมื่อมี alert (ต้องตั้ง OPS_ALERT_WEBHOOK_URL เป็น HTTPS)
+npm run ops:health -- --notify
+```
+
+ขั้นตอนฉบับเต็ม, payload ที่ไม่มีความลับ, ข้อจำกัด และข้อเสนอ RLS/grant (ยังไม่ apply) อยู่ที่ [docs/PHASE5F_OPERATIONS_ROTATION_RLS.md](./docs/PHASE5F_OPERATIONS_ROTATION_RLS.md) และ SQL ข้อเสนอที่ซ้อมบน Docker แล้วอยู่ที่ [db/proposals/](./db/proposals/) (ไม่อยู่ใน migrations จึงไม่ถูก apply อัตโนมัติ)
 
 ## สถานะ Phase 4A — LINE OA Integration Readiness
 
@@ -106,6 +121,8 @@ npm run test:oa
 npm run test:phase4a  # ต้องมี PostgreSQL Staging และ credentials ใน process environment
 npm run test:phase4b  # Outbox, restart recovery, kill switch, retry safety และ RBAC
 npm run test:e2e  # ต้องมี API/Admin ที่เปิดอยู่และ STAGING_ADMIN_PASSWORD ใน process environment
+npm run test:phase5e  # CI/compose/edge assets, ops health และ guard scripts (รวม smoke กับ memory API)
+npm run test:phase5f  # vault rotation, alert payload/webhook และ CLI opt-in
 npm run typecheck
 npm run build
 

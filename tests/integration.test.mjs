@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process';
 const base = 'http://127.0.0.1:8790';
 const password = process.env.STAGING_ADMIN_PASSWORD;
 const viewerPassword = process.env.STAGING_VIEWER_PASSWORD;
+const webhookSecret = process.env.STAGING_WEBHOOK_SECRET;
+const webhookConfigured = Boolean(webhookSecret && process.env.LINE_CREDENTIAL_ENCRYPTION_KEY);
 if (!password || !viewerPassword) throw new Error('STAGING_ADMIN_PASSWORD and STAGING_VIEWER_PASSWORD are required; fixed staging credentials are not allowed');
 let child;
 let cookie = '';
@@ -18,7 +20,7 @@ async function waitForHealth() {
 }
 
 function startApi() {
-  child = spawn(process.execPath, ['dist/api/server.js'], { cwd: process.cwd(), env: { ...process.env, PORT: '8790', PERSISTENCE: 'postgres', APP_MODE: 'DRY_RUN', LINE_WEBHOOK_ENABLED: 'true', LINE_CHANNEL_SECRET: 'integration-channel-secret' }, stdio: 'ignore' });
+  child = spawn(process.execPath, ['dist/api/server.js'], { cwd: process.cwd(), env: { ...process.env, PORT: '8790', PERSISTENCE: 'postgres', APP_MODE: 'DRY_RUN', LINE_WEBHOOK_ENABLED: webhookConfigured ? 'true' : 'false' }, stdio: 'ignore' });
   return waitForHealth();
 }
 
@@ -85,12 +87,12 @@ test('viewer RBAC cannot create a Flex revision', async () => {
   await request('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.STAGING_ADMIN_EMAIL || 'admin@staging.local', password }) });
 });
 
-test('LINE webhook verifies HMAC and deduplicates event id', async () => {
+test('LINE webhook verifies per-OA vault secret and deduplicates event id', { skip: webhookConfigured ? false : 'STAGING_WEBHOOK_SECRET and LINE_CREDENTIAL_ENCRYPTION_KEY are required; PostgreSQL webhooks no longer accept an environment secret' }, async () => {
   const oas = await request('/api/oas');
   const oaId = oas.body.oas.find((oa) => oa.enabled).id;
   const eventId = `phase2-event-${Date.now()}`;
   const raw = JSON.stringify({ events: [{ webhookEventId: eventId, type: 'follow', source: { userId: `U-phase2-${Date.now()}` } }] });
-  const signature = createHmac('sha256', 'integration-channel-secret').update(raw).digest('base64');
+  const signature = createHmac('sha256', webhookSecret).update(raw).digest('base64');
   const invalid = await request(`/api/webhooks/line/${oaId}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-line-signature': 'invalid' }, body: raw });
   assert.equal(invalid.response.status, 401);
   const first = await request(`/api/webhooks/line/${oaId}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-line-signature': signature }, body: raw });
@@ -115,6 +117,12 @@ test('scheduler supports pause, retry, DRY RUN and audit persistence', async () 
   assert.equal(dryRun.response.status, 200);
   assert.equal(dryRun.body.status, 'COMPLETED');
   assert.equal(dryRun.body.attempts, 1);
+  const outbox = await request(`/api/scheduler/jobs/${jobId}/outbox`);
+  assert.equal(outbox.response.status, 200);
+  assert.equal(outbox.body.deliveries.length, 1);
+  assert.equal(outbox.body.deliveries[0].status, 'SENT');
+  assert.equal(outbox.body.deliveries[0].recipientKey, '__campaign__');
   const audit = await request('/api/audit');
-  assert.ok(audit.body.events.some((event) => event.target === jobId && event.action === 'DRY_RUN_EXECUTED'));
+  assert.ok(audit.body.events.some((event) => event.target === jobId && event.action === 'DRY_RUN_ENQUEUED'));
+  assert.ok(audit.body.events.some((event) => event.target === jobId && event.action === 'WORKER_COMPLETED'));
 });

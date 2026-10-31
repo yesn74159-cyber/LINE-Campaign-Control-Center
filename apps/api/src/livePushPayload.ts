@@ -11,14 +11,37 @@ export type LivePushBody = {
   messages: Array<Record<string, unknown>>;
 };
 
+/** Campaign-level preview used when a DRY_RUN job has no consented recipient. */
+export const PREVIEW_RECIPIENT = '__campaign__';
+
+export type DeliveryPayload =
+  | { preview: true; messages: Array<Record<string, unknown>>; to?: undefined }
+  | { preview: false; to: string; messages: Array<Record<string, unknown>> };
+
+/**
+ * Creates the exact body used by both the mock and live adapters.
+ * A real recipient runs the full live validation; the preview recipient is
+ * only reachable in DRY_RUN because the live adapter rejects preview payloads.
+ */
+export function buildDeliveryPayload(input: { recipientKey: string; flexMessage: unknown }): DeliveryPayload {
+  if (input.recipientKey === PREVIEW_RECIPIENT) {
+    const flex = assertFlexJson(input.flexMessage);
+    if (typeof flex.altText !== 'string' || flex.altText.trim().length === 0) {
+      throw new Error('Flex message altText must not be empty');
+    }
+    return { preview: true, messages: [structuredClone(flex)] };
+  }
+  const body = buildLivePushBody({ lineUserId: input.recipientKey, flexMessage: input.flexMessage });
+  return { preview: false, to: body.to, messages: body.messages };
+}
+
 /**
  * Creates a single-recipient LINE Messaging API push body.
  *
- * This is intentionally NOT wired to LiveLineMessagingAdapter yet.
- * An authenticated caller must first enforce OA/provider identity,
- * consent and opt-out, campaign approval, quota, kill switches, frozen
- * revision, per-recipient idempotency, and the explicit LIVE release gate.
- * No network operations occur in this module.
+ * The worker still enforces OA/provider identity, consent and opt-out,
+ * campaign approval, quota, kill switches, frozen revision,
+ * per-recipient idempotency, and the explicit LIVE release gate before
+ * this body reaches a transport. No network operations occur here.
  */
 export function buildLivePushBody(input: LivePushBodyInput): LivePushBody {
   const userId = input.lineUserId;

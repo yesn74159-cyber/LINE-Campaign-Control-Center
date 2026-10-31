@@ -1,13 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
-import { createSessionToken } from './auth.js';
+import { createSessionToken, DUMMY_PASSWORD_HASH, verifyPassword } from './auth.js';
 import { createDatabase } from './db.js';
-import { createPostgresRepository, createMemoryRepository, verifyPassword, type Repository } from './repository.js';
+import { createPostgresRepository, createMemoryRepository, type Repository } from './repository.js';
 import { assertControlReason, assertEmail, assertFlexJson, assertOaMetadata, assertPassword, assertScheduledAt, assertSchedulerStatus, assertTimeZone, can } from './validation.js';
-import { payloadHash, verifyLineSignature } from './webhook.js';
 import type { AdminUser } from './types.js';
 import { registerTenantAdminRoutes } from './tenantAdmin.js';
 import { registerOaConnectRoutes } from './lineOaConnect.js';
@@ -15,6 +15,13 @@ import { CampaignMockStore } from './campaignMock.js';
 import { registerCampaignMockRoutes } from './campaignRoutes.js';
 import { createLineLoginConfig, registerLineLoginRoutes } from './lineLogin.js';
 import { PostgresLineLoginStore } from './lineLoginPostgresStore.js';
+import { registerReferralRoutes } from './referralRoutes.js';
+import { registerLineWebhookRoutes } from './lineWebhook.js';
+import { runWorkerOnce } from './worker.js';
+import { MockLineMessagingAdapter } from './lineAdapter.js';
+import { ACCOUNT_TOKEN_PATTERN } from './accountTokens.js';
+import { registerBaselineSecurity, createFixedWindowLimiter } from './security.js';
+import { readDeliveryHealth } from './opsHealth.js';
 
 type RequestWithUser = FastifyRequest & { user?: AdminUser; raw: FastifyRequest['raw'] & { rawBody?: string } };
 
@@ -32,10 +39,14 @@ function csrfCookieOptions() { return { httpOnly: false, sameSite: 'lax' as cons
 export function buildApp(injectedRepository?: Repository) {
   const selected = injectedRepository ? { repository: injectedRepository, database: null } : defaultRepository();
   const repo = selected.repository;
-  const app = Fastify({ logger: false, bodyLimit: 100 * 1024 });
+  const app = Fastify({ logger: false, bodyLimit: 100 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || process.env.PUBLIC_APP_ORIGIN || 'http://127.0.0.1:5173,http://localhost:5173').split(',').map((origin) => origin.trim()).filter(Boolean);
   app.register(cors, { origin: allowedOrigins, credentials: true });
   app.register(cookie);
+  registerBaselineSecurity(app, allowedOrigins);
+  const loginLimiter = createFixedWindowLimiter(10, 15 * 60 * 1000);
+  const loginIpLimiter = createFixedWindowLimiter(50, 15 * 60 * 1000);
+  const accountSetupLimiter = createFixedWindowLimiter(10, 15 * 60 * 1000);
   app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
     (request as RequestWithUser).raw.rawBody = String(body);
     try { done(null, JSON.parse(String(body))); } catch { done(new Error('invalid JSON body')); }
@@ -72,21 +83,40 @@ export function buildApp(injectedRepository?: Repository) {
       role: 'owner'
     });
     registerCampaignMockRoutes(app, mockStore, authenticate, requireCsrf, workspaceId => repo.listOas(workspaceId));
+    app.get('/api/audit', { preHandler: authorize('read') }, async () => ({ events: [...(await repo.listAudit('memory-workspace')), ...mockStore.listAudit()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100) }));
     registerLineLoginRoutes(app, mockStore, createLineLoginConfig());
   } else {
     const pool = selected.database?.pool;
     if (!pool) throw new Error('PostgreSQL persistence is required for LINE Login routes');
     registerTenantAdminRoutes(app, pool, authenticate, requireCsrf);
     registerOaConnectRoutes(app, pool, authenticate, requireCsrf);
+    registerReferralRoutes(app, pool, authenticate, requireCsrf);
     registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }
   app.get('/health', async () => ({ ok: true, mode: process.env.APP_MODE || 'DRY_RUN', persistence: repo.kind }));
+  const opsPool = selected.database?.pool;
+  if (repo.kind === 'postgres' && opsPool) {
+    app.get('/api/ops/delivery-health', { preHandler: authorize('read') }, async (request) => readDeliveryHealth(opsPool, { workspaceId: (request as RequestWithUser).user!.workspaceId }));
+  }
   app.post<{ Body: { email: string; password: string } }>('/api/auth/login', { schema: { body: { type: 'object', required: ['email', 'password'], additionalProperties: false, properties: { email: { type: 'string', minLength: 3, maxLength: 320 }, password: { type: 'string', minLength: 12, maxLength: 200 } } } } }, async (request, reply) => {
-    try { const email = assertEmail(request.body.email); const password = assertPassword(request.body.password); const user = await repo.getUserByEmail(email); if (!user || !verifyPassword(user, password)) return reply.code(401).send({ error: 'invalid credentials' }); const session = await repo.createSession(user.id); reply.setCookie('ccc_session', session.token, sessionCookieOptions()); reply.setCookie('ccc_csrf', createSessionToken(), csrfCookieOptions()); return { user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role }, expiresAt: session.expiresAt.toISOString() }; }
+    try { const email = assertEmail(request.body.email); const password = assertPassword(request.body.password); const attemptKey = `${request.ip}:${email}`; if (!loginIpLimiter.take(request.ip) || !loginLimiter.take(attemptKey)) return reply.code(429).send({ error: 'too many login attempts; try again later' }); const user = await repo.getUserByEmail(email); const passwordMatches = await verifyPassword(password, user?.passwordHash || DUMMY_PASSWORD_HASH); if (!user || !passwordMatches) return reply.code(401).send({ error: 'invalid credentials' }); loginLimiter.reset(attemptKey); const session = await repo.createSession(user.id); reply.setCookie('ccc_session', session.token, sessionCookieOptions()); reply.setCookie('ccc_csrf', createSessionToken(), csrfCookieOptions()); return { user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role }, expiresAt: session.expiresAt.toISOString() }; }
     catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid login request' }); }
   });
   app.post('/api/auth/logout', { preHandler: async (request, reply) => { const result = await authenticate(request, reply); if (result) return result; return requireCsrf(request, reply); } }, async (request, reply) => { const token = (request as FastifyRequest & { cookies?: Record<string, string> }).cookies?.ccc_session; if (token) await repo.revokeSession(token); reply.clearCookie('ccc_session', { path: '/' }); reply.clearCookie('ccc_csrf', { path: '/' }); return { ok: true }; });
   app.get('/api/auth/me', { preHandler: authenticate }, async (request) => ({ user: (request as RequestWithUser).user }));
+
+  app.post<{ Body: { token: string; password: string } }>('/api/account/setup', { schema: { body: { type: 'object', required: ['token', 'password'], additionalProperties: false, properties: { token: { type: 'string', minLength: 43, maxLength: 43 }, password: { type: 'string', minLength: 12, maxLength: 200 } } } } }, async (request, reply) => {
+    if (!accountSetupLimiter.take(request.ip)) return reply.code(429).send({ error: 'too many account setup attempts; try again later' });
+    if (!ACCOUNT_TOKEN_PATTERN.test(request.body.token)) return reply.code(400).send({ error: 'account link is invalid or expired' });
+    try {
+      const user = await repo.consumeAccountToken(request.body.token, assertPassword(request.body.password));
+      reply.clearCookie('ccc_session', { path: '/' });
+      reply.clearCookie('ccc_csrf', { path: '/' });
+      return { user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role } };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : 'account link is invalid or expired' });
+    }
+  });
 
   app.get('/api/dashboard', { preHandler: authorize('read') }, async (request) => ({ ...(await repo.dashboard((request as RequestWithUser).user!.workspaceId)), persistence: repo.kind, generatedAt: new Date().toISOString() }));
   app.get('/api/campaigns', { preHandler: authorize('read') }, async (request) => ({ campaigns: await repo.listCampaigns((request as RequestWithUser).user!.workspaceId) }));
@@ -107,25 +137,23 @@ export function buildApp(injectedRepository?: Repository) {
   app.get<{ Params: { id: string } }>('/api/scheduler/jobs/:id/outbox', { preHandler: authorize('read'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100 } } } } }, async (request) => ({ deliveries: await repo.listOutbox((request as RequestWithUser).user!.workspaceId, request.params.id) }));
   app.get('/api/automation', { preHandler: authorize('read') }, async (request) => { const jobs = await repo.listJobs((request as RequestWithUser).user!.workspaceId); const summary: Record<string, number> = {}; for (const job of jobs) summary[job.status] = (summary[job.status] || 0) + 1; return { jobs, summary }; });
   if (repo.kind !== 'memory') app.get('/api/audit', { preHandler: authorize('read') }, async (request) => ({ events: await repo.listAudit((request as RequestWithUser).user!.workspaceId) }));
-  app.post<{ Body: { campaignId: string; oaId: string; scheduledAt: string; timeZone?: string; status?: 'DRAFT' | 'SCHEDULED' } }>('/api/scheduler/jobs', { preHandler: authorize('write'), schema: { body: { type: 'object', required: ['campaignId', 'oaId', 'scheduledAt'], additionalProperties: false, properties: { campaignId: { type: 'string', minLength: 1, maxLength: 80 }, oaId: { type: 'string', minLength: 1, maxLength: 100 }, scheduledAt: { type: 'string', format: 'date-time' }, timeZone: { type: 'string', maxLength: 64 }, status: { type: 'string', enum: ['DRAFT', 'SCHEDULED'] } } } } }, async (request, reply) => { try { const status = assertSchedulerStatus(request.body.status); return reply.code(201).send(await repo.addJob({ campaignId: request.body.campaignId, oaId: request.body.oaId, scheduledAt: assertScheduledAt(request.body.scheduledAt, status), timeZone: assertTimeZone(request.body.timeZone || 'Asia/Bangkok'), status, workspaceId: (request as RequestWithUser).user!.workspaceId, actor: (request as RequestWithUser).user!.email })); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
+  app.post<{ Body: { campaignId: string; oaId: string; scheduledAt: string; timeZone?: string; status?: 'DRAFT' | 'SCHEDULED' } }>('/api/scheduler/jobs', { preHandler: authorize('write'), schema: { body: { type: 'object', required: ['campaignId', 'oaId', 'scheduledAt'], additionalProperties: false, properties: { campaignId: { type: 'string', minLength: 1, maxLength: 80 }, oaId: { type: 'string', minLength: 1, maxLength: 100 }, scheduledAt: { type: 'string', format: 'date-time' }, timeZone: { type: 'string', maxLength: 64 }, status: { type: 'string', enum: ['DRAFT', 'SCHEDULED'] } } } } }, async (request, reply) => { try { const status = assertSchedulerStatus(request.body.status); const idempotencyHeader = request.headers['idempotency-key']; const rawKey = Array.isArray(idempotencyHeader) ? idempotencyHeader[0] : idempotencyHeader; const clientRequestKey = rawKey === undefined ? undefined : String(rawKey); if (clientRequestKey !== undefined && !/^[A-Za-z0-9_-]{8,100}$/.test(clientRequestKey)) return reply.code(400).send({ error: 'idempotency key must be 8-100 URL-safe characters' }); return reply.code(201).send(await repo.addJob({ campaignId: request.body.campaignId, oaId: request.body.oaId, scheduledAt: assertScheduledAt(request.body.scheduledAt, status), timeZone: assertTimeZone(request.body.timeZone || 'Asia/Bangkok'), status, workspaceId: (request as RequestWithUser).user!.workspaceId, actor: (request as RequestWithUser).user!.email, clientRequestKey })); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   const jobParams = { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-zA-Z0-9_-]+$' } } };
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/pause', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.pauseJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/schedule', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.scheduleJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/resume', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.resumeJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/cancel', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.cancelJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
   app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/retry', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.retryJob(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
-  app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/dry-run', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { return await repo.runDryRun(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
+  app.post<{ Params: { id: string } }>('/api/scheduler/jobs/:id/dry-run', { preHandler: authorize('write'), schema: { params: jobParams } }, async (request, reply) => { try { const queued = await repo.runDryRun(request.params.id, (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); const outcome = await runWorkerOnce(repo, new MockLineMessagingAdapter(), { jobId: queued.id, workerId: `api-dry-run-${randomUUID()}`, maxAttempts: 1 }); if (outcome.status !== 'completed') return reply.code(409).send({ error: `dry-run pipeline ${outcome.status}` }); return outcome.job; } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid scheduler request' }); } });
+  app.post<{ Params: { id: string; deliveryId: string }; Body: { status: 'SENT' | 'FAILED' } }>('/api/scheduler/jobs/:id/outbox/:deliveryId/reconcile', { preHandler: authorize('write'), schema: { params: { type: 'object', required: ['id', 'deliveryId'], properties: { id: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-zA-Z0-9_-]+$' }, deliveryId: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-zA-Z0-9_-]+$' } } }, body: { type: 'object', required: ['status'], additionalProperties: false, properties: { status: { type: 'string', enum: ['SENT', 'FAILED'] } } } } }, async (request, reply) => { try { return await repo.reconcileOutboxDelivery({ jobId: request.params.id, deliveryId: request.params.deliveryId, workspaceId: (request as RequestWithUser).user!.workspaceId, status: request.body.status, actor: (request as RequestWithUser).user!.email }); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'could not reconcile delivery' }); } });
 
-  app.post<{ Params: { oaId: string }; Body: { events?: Array<{ webhookEventId?: string; type?: string; source?: { userId?: string } }> } }>('/api/webhooks/line/:oaId', { schema: { params: { type: 'object', required: ['oaId'], properties: { oaId: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-zA-Z0-9_-]+$' } } } } }, async (request, reply) => {
-    if (process.env.LINE_WEBHOOK_ENABLED !== 'true') return reply.code(503).send({ error: 'staging webhook is disabled' });
-    const rawBody = (request as RequestWithUser).raw.rawBody || JSON.stringify(request.body || {});
-    const signatureHeader = request.headers['x-line-signature'];
-    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-    if (!verifyLineSignature(rawBody, signature, process.env.LINE_CHANNEL_SECRET)) return reply.code(401).send({ error: 'invalid LINE signature' });
-    const events = Array.isArray(request.body?.events) ? request.body.events : [];
-    let duplicates = 0;
-    for (const event of events) { if (!event.webhookEventId) continue; const result = await repo.acceptWebhook({ oaId: request.params.oaId, eventId: event.webhookEventId, payloadHash: payloadHash(rawBody), eventType: event.type, lineUserKey: event.source?.userId }); if (result.duplicate) duplicates += 1; }
-    return { accepted: true, eventCount: events.length, duplicates };
+  if (repo.kind === 'postgres' && !selected.database?.pool) throw new Error('PostgreSQL LINE webhook requires a database pool');
+  registerLineWebhookRoutes(app, {
+    repo,
+    pool: selected.database?.pool ?? null,
+    enabled: process.env.LINE_WEBHOOK_ENABLED === 'true',
+    fallbackChannelSecret: selected.database?.pool ? undefined : process.env.LINE_CHANNEL_SECRET,
+    identityHashKey: process.env.LINE_IDENTITY_HASH_KEY || ''
   });
 
   app.addHook('onReady', async () => {

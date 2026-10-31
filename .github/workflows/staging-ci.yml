@@ -4,27 +4,70 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: staging-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  APP_MODE: DRY_RUN
+  LINE_LIVE_ENABLED: 'false'
+  LINE_WEBHOOK_ENABLED: 'false'
+
 jobs:
   verify:
-    name: Tests, security, typecheck and build
+    name: Static suites, typecheck and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run test:security
-      - run: npm run test:campaign-mock
-      - run: npm run test:line-login
-      - run: npm run typecheck
       - run: npm run build
+      - name: Core and phase suites
+        run: >-
+          node --test
+          tests/core.test.mjs
+          tests/phase1.test.mjs
+          tests/security.test.mjs
+          tests/phase5a.test.mjs
+          tests/phase5b.test.mjs
+          tests/phase5c.test.mjs
+          tests/phase5d.test.mjs
+          tests/phase5e.test.mjs
+          tests/phase5f.test.mjs
+      - name: Campaign, OA and contract suites
+        run: >-
+          node --test
+          tests/campaign-mock.test.mjs
+          tests/line-login.test.mjs
+          tests/oa-live-connect.test.mjs
+          tests/live-push-payload.test.mjs
+      - name: Tenant suites without a database
+        run: >-
+          node --test
+          tests/multitenant-login.test.mjs
+          tests/tenant-admin-api.test.mjs
+          tests/multitenant-foundation.integration.test.mjs
+
+  audit:
+    name: Production dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
 
   postgres-line-login:
     name: Disposable PostgreSQL LINE Login integration
@@ -39,20 +82,282 @@ jobs:
         ports:
           - 55433:5432
         options: >-
-          --health-cmd "pg_isready -U line_ccc -d line_campaign_ccc"
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_line_login_qa_ci"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55433/line_ccc_line_login_qa_ci
       LINE_LOGIN_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55433/line_ccc_line_login_qa_ci
-      APP_MODE: DRY_RUN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:line-login:postgres
+
+  postgres-referral:
+    name: Disposable PostgreSQL referral integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_referral_qa_ci
+        ports:
+          - 55434:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_referral_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55434/line_ccc_referral_qa_ci
+      REFERRAL_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55434/line_ccc_referral_qa_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:referral:postgres
+
+  postgres-webhook:
+    name: Disposable PostgreSQL webhook integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_webhook_qa_ci
+        ports:
+          - 55435:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_webhook_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55435/line_ccc_webhook_qa_ci
+      WEBHOOK_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55435/line_ccc_webhook_qa_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:webhook:postgres
+
+  postgres-delivery:
+    name: Disposable PostgreSQL delivery pipeline
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_delivery_qa_ci
+        ports:
+          - 55436:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_delivery_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55436/line_ccc_delivery_qa_ci
+      DELIVERY_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55436/line_ccc_delivery_qa_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:delivery:postgres
+
+  postgres-tenant:
+    name: Disposable PostgreSQL tenant constraints and migration replay
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_tenant_qa_ci
+        ports:
+          - 55437:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_tenant_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55437/line_ccc_tenant_qa_ci
+      TENANT_TEST_DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55437/line_ccc_tenant_qa_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:api
+      - name: Replay migrations from an empty database
+        run: npm run db:migrate
+      - run: node --test tests/multitenant-foundation.integration.test.mjs
+
+  postgres-phase4a:
+    name: Disposable PostgreSQL Phase 4A workflow
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_phase4a_qa_ci
+        ports:
+          - 55438:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_phase4a_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55438/line_ccc_phase4a_qa_ci
+      STAGING_ADMIN_EMAIL: admin@staging.local
+      STAGING_ADMIN_PASSWORD: ci-staging-admin-password
+      STAGING_VIEWER_EMAIL: viewer@staging.local
+      STAGING_VIEWER_PASSWORD: ci-staging-viewer-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:api
+      - run: npm run db:setup
+      - run: node --test --test-concurrency=1 tests/phase4a.integration.test.mjs
+
+  postgres-phase4b:
+    name: Disposable PostgreSQL Phase 4B policy and outbox
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_phase4b_qa_ci
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_phase4b_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55439/line_ccc_phase4b_qa_ci
+      STAGING_ADMIN_EMAIL: admin@staging.local
+      STAGING_ADMIN_PASSWORD: ci-staging-admin-password
+      STAGING_VIEWER_EMAIL: viewer@staging.local
+      STAGING_VIEWER_PASSWORD: ci-staging-viewer-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:api
+      - run: npm run db:setup
+      - run: node --test --test-concurrency=1 tests/phase4b.integration.test.mjs
+
+  postgres-integration:
+    name: Disposable PostgreSQL staging API integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: line_ccc
+          POSTGRES_PASSWORD: line_ccc_ci_password
+          POSTGRES_DB: line_ccc_integration_qa_ci
+        ports:
+          - 55440:5432
+        options: >-
+          --health-cmd "pg_isready -U line_ccc -d line_ccc_integration_qa_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://line_ccc:line_ccc_ci_password@127.0.0.1:55440/line_ccc_integration_qa_ci
+      STAGING_ADMIN_EMAIL: admin@staging.local
+      STAGING_ADMIN_PASSWORD: ci-staging-admin-password
+      STAGING_VIEWER_EMAIL: viewer@staging.local
+      STAGING_VIEWER_PASSWORD: ci-staging-viewer-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build:api
+      - run: npm run db:setup
+      - run: node --test --test-concurrency=1 tests/integration.test.mjs
+
+  admin-e2e:
+    name: Admin browser E2E on local mock
+    runs-on: ubuntu-latest
+    env:
+      PERSISTENCE: memory
+      MEMORY_ADMIN_EMAIL: admin@memory.local
+      MEMORY_ADMIN_PASSWORD: ci-memory-password-123456
+      STAGING_ADMIN_EMAIL: admin@memory.local
+      STAGING_ADMIN_PASSWORD: ci-memory-password-123456
       LINE_LIVE_ENABLED: 'false'
       LINE_WEBHOOK_ENABLED: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npm run test:line-login:postgres
+      - run: npx playwright install --with-deps chromium
+      - name: Start local mock API and Admin
+        run: |
+          nohup npm run dev:api > api.log 2>&1 &
+          nohup npm run dev:admin > admin.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null && curl -fsS http://127.0.0.1:5173/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "local servers did not become ready"
+          cat api.log admin.log
+          exit 1
+      - run: npm run test:e2e
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-e2e-logs
+          path: |
+            api.log
+            admin.log
+            qa-screenshots

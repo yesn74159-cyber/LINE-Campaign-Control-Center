@@ -14,12 +14,16 @@ export async function seedStaging(pool: Pool) {
     await client.query('begin');
     const workspace = await client.query<{ id: string }>(`insert into workspaces(name, mode) values ('LINE Campaign Control Center Staging', 'DRY_RUN') on conflict (name) do update set mode='DRY_RUN' returning id`);
     const workspaceId = workspace.rows[0].id;
-    await client.query(`insert into admin_users(workspace_id,email,display_name,role,password_hash) values ($1,$2,'Staging Owner','owner',$3) on conflict (workspace_id,email) do update set password_hash=excluded.password_hash, active=true`, [workspaceId, email, hashPasswordSync(password)]);
+    const adminUser = await client.query<{ id: string }>(`insert into admin_users(workspace_id,email,display_name,role,password_hash) values ($1,$2,'Staging Owner','owner',$3) on conflict (workspace_id,email) do update set password_hash=excluded.password_hash, active=true returning id`, [workspaceId, email, hashPasswordSync(password)]);
+    await client.query(`insert into workspace_memberships(workspace_id,admin_user_id,status) values ($1,$2,'ACTIVE') on conflict (workspace_id,admin_user_id) do update set status='ACTIVE'`, [workspaceId, adminUser.rows[0].id]);
     const oa = await client.query<{ id: string }>(`insert into oa_integrations(workspace_id,provider_id,basic_id,display_name,environment,enabled) values ($1,'staging-provider','@453yfyvc','LINE OA หลัก (Staging)','STAGING',true) on conflict (workspace_id,provider_id,basic_id) do update set enabled=true returning id`, [workspaceId]);
     await client.query(`insert into oa_integrations(workspace_id,provider_id,basic_id,display_name,environment,enabled) values ($1,'mock-provider','@mock-campaign','LINE OA สำรอง (Mock)','STAGING',false) on conflict (workspace_id,provider_id,basic_id) do update set enabled=false`, [workspaceId]);
     const viewerEmail = process.env.STAGING_VIEWER_EMAIL?.trim().toLowerCase();
     const viewerPassword = process.env.STAGING_VIEWER_PASSWORD;
-    if (viewerEmail && viewerPassword) await client.query(`insert into admin_users(workspace_id,email,display_name,role,password_hash) values ($1,$2,'Staging Viewer','viewer',$3) on conflict (workspace_id,email) do update set password_hash=excluded.password_hash, active=true`, [workspaceId, viewerEmail, hashPasswordSync(viewerPassword)]);
+    if (viewerEmail && viewerPassword) {
+      const viewer = await client.query<{ id: string }>(`insert into admin_users(workspace_id,email,display_name,role,password_hash) values ($1,$2,'Staging Viewer','viewer',$3) on conflict (workspace_id,email) do update set password_hash=excluded.password_hash, active=true returning id`, [workspaceId, viewerEmail, hashPasswordSync(viewerPassword)]);
+      await client.query(`insert into workspace_memberships(workspace_id,admin_user_id,status) values ($1,$2,'ACTIVE') on conflict (workspace_id,admin_user_id) do update set status='ACTIVE'`, [workspaceId, viewer.rows[0].id]);
+    }
     for (const item of manifest.campaigns) {
       const campaign = await client.query<{ id: string }>(`insert into campaigns(workspace_id,slug,name,title,description,image,cta,flex_file,active) values ($1,$2,$3,$4,$5,$6,$7,$8,true) on conflict (workspace_id,slug) do update set name=excluded.name,title=excluded.title,description=excluded.description,image=excluded.image,cta=excluded.cta,flex_file=excluded.flex_file,active=true returning id`, [workspaceId, item.id, item.name, item.title, item.description, item.image, item.cta, item.flexFile]);
       const flex = JSON.parse(await fs.readFile(path.join(root, String(item.flexFile)), 'utf8'));

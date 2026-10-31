@@ -1,8 +1,41 @@
+# Staging topology: postgres (loopback only), api, worker (private), admin
+# (Nginx static + reverse proxy) and Caddy for TLS. Only Caddy publishes ports.
+#   docker compose --env-file .env.staging -f docker-compose.staging.yml up -d --build
+name: line-ccc-staging
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile
+    target: api
+  env_file:
+    - .env.staging
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: line-ccc-postgres-staging
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-line_ccc}
       # Required for the existing local volume; no password fallback is stored in the repository.
@@ -12,5 +45,88 @@ services:
       - "127.0.0.1:55433:5432"
     volumes:
       - line-ccc-postgres-staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *app
+    container_name: line-ccc-api-staging
+    # No published ports: reachable only through the admin Nginx container.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    <<: *app
+    container_name: line-ccc-worker-staging
+    command: ["node", "dist/api/worker.js"]
+    # No ports, no healthcheck endpoint: liveness is watched through the
+    # WORKER_STALE alert on /api/ops/delivery-health.
+    environment:
+      APP_MODE: DRY_RUN
+      LINE_LIVE_ENABLED: "false"
+      LINE_WEBHOOK_ENABLED: "false"
+    stop_grace_period: 30s
+
+  admin:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      target: admin
+    container_name: line-ccc-admin-staging
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: line-ccc-caddy-staging
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      admin:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      STAGING_DOMAIN: ${STAGING_DOMAIN:-localhost}
+      CADDY_TLS: ${CADDY_TLS:-internal}
+      ACME_EMAIL: ${ACME_EMAIL:-ops@example.invalid}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - line-ccc-caddy-data:/data
+      - line-ccc-caddy-config:/config
+
 volumes:
   line-ccc-postgres-staging:
+  line-ccc-caddy-data:
+  line-ccc-caddy-config:
