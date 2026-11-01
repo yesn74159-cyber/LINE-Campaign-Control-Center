@@ -1,11 +1,24 @@
 # Worklog
 
-## 2026-11-01 — Dedicated staging host preparation (no deploy)
+## 2026-11-01 — Dedicated staging host deployed live (Lightsail)
 
-- Chose an isolated staging VM instead of reusing the shared preview host `line-ccc-v1`, where 80/443 and the PHP packages are already serving other apps.
-- Added `deploy/host-bootstrap.sh`: refuses to run when 80/443 is already bound, installs Docker Engine and the compose plugin from Docker's apt repository, adds 2 GB swap for image builds on 4 GB RAM, caps journald at 500 MB, enables ufw (22/80/443) with a note that Docker published ports bypass ufw, enables fail2ban and unattended-upgrades, and creates `/srv/line-ccc-staging`.
-- Capped compose logs at 10 MB × 3 files for postgres/api/worker/admin/caddy so an 80 GB VM cannot fill its disk; `docker compose config` still validates.
-- No instance was created, no deploy, no cloud connection, no secret values touched.
+- Chose an isolated staging VM instead of reusing the shared preview host `line-ccc-v1`, where 80/443 and the PHP packages are already serving other apps. Instance `line-ccc-staging`: Ubuntu 24.04.4, ap-southeast-1a, 4 GB/2 vCPU/80 GB, static IP 13.212.244.219, served at `https://13-212-244-219.sslip.io/`.
+- Code ships from branch `staging-deploy-2026-11-01` (main untouched; main was stale and missed phases 5A–5F plus the fresh-DB fixes, so deploying from main would have broken migration 010 and login).
+- `deploy/host-bootstrap.sh` provisioned Docker 29.9.2 + compose plugin, 2 GB swap, ufw 22/80/443, fail2ban, unattended-upgrades, journald 500 MB cap, and `/srv/line-ccc-staging`. Compose logs capped at 10 MB × 3 files.
+- Lightsail IPv4 firewall serves 22/80/443; 443 was opened from the console after the first deploy (Caddy obtained a Let's Encrypt cert via HTTP-01 while only 80 was open, then HTTPS went live).
+- Compose stack runs postgres (loopback 55433 only), api, worker (no ports), admin behind Nginx, Caddy on 80/443 with HSTS/CSP/nosniff. Migrations 001–012 applied; seed created 7 campaigns plus owner/viewer users.
+- Fixed the fresh-image EACCES that blocked the CLI: build-context files arrived mode 600/700 and Docker COPY preserved those modes while the image runs `USER node`. `deploy/Dockerfile` now copies `dist`, `db`, `campaigns.json` and `flex` with `--chown=node:node`, with a phase5e regression assertion per asset. The one-off migrate/seed ran as root before this fix and is no longer needed after the rebuild.
+- Read-only staging smoke against the live URL: 10/10 checks (health, DRY_RUN mode, postgres persistence, security headers, LINE Login disabled, dashboard auth gate, admin login, ops delivery health, audit log, logout).
+- Safety posture unchanged: `APP_MODE=DRY_RUN`, `LINE_LIVE_ENABLED=false`, `LINE_WEBHOOK_ENABLED=false`, LINE Login disabled, no real LINE/OA secrets on the host, DB reachable only on loopback.
+- Remaining: backups still live only on the VM (offsite copy pending), read-only cloud audit + backup/restore drill recorded in the entry below.
+
+## 2026-11-01 — Backup/restore drill and read-only cloud audit on live staging
+
+- `pg_dump --format=custom` from the postgres container wrote a 93,599-byte archive to `/srv/line-ccc-staging/backups/` (PGDMP magic verified, sha256 sidecar written). The host has no PostgreSQL client, so the drill used `docker compose exec -T postgres sh -c 'pg_dump ...'` — the runbook now documents both paths.
+- Restore drill: created `line_ccc_restore_drill`, `pg_restore` exit 0, row counts matched the live database exactly (schema_migrations 12, campaigns 7, admin_users 2, audit_log 7, outbox_deliveries 0), then dropped the drill database.
+- Read-only audit (`begin read only`, SELECT-only guard, role `line_ccc`): migrations 001–012 all applied; all 25 expected tables present and no unexpected public tables; outbox empty; the three `line_customer_*` tables have RLS enabled with zero policies (migration 011) — harmless while the API connects as the owning superuser, but tracked by the RLS proposal; the app role `line_ccc` is `rolsuper` with `BYPASSRLS` and full DML grants on all 26 tables — exactly the posture the Tier A/B proposal exists to tighten; FK audit reports 25 composite FKs without a leading-column index (the 7 covered by `db/proposals/013_fk_supporting_indexes.sql` plus the 18 additional gaps recorded during the 5F rehearsal).
+- Fixed two repo defects found by the drill: `.gitignore` had `audit/` which silently excluded `db/audit/read-only-audit.sql` from version control (now `/audit/`, file tracked); the FK-index audit query referenced an output alias inside `ORDER BY`, which PostgreSQL rejects (now wrapped in a subquery).
+- No production data changed: the restore touched only the disposable drill database and the audit ran in a read-only transaction.
 
 ## 2026-11-01 — RLS/grant proposal rehearsal on disposable PostgreSQL
 

@@ -98,7 +98,10 @@ test('Deployment assets keep secrets out of build layers and add edge protection
   assert.match(dockerfile, /FROM nginx:1\.27-alpine AS admin/);
   assert.match(dockerfile, /USER node/);
   assert.match(dockerfile, /npm ci --omit=dev/);
-  assert.match(dockerfile, /COPY db \.\/db/);
+  assert.match(dockerfile, /COPY --from=build --chown=node:node \/app\/dist \.\/dist/);
+  assert.match(dockerfile, /COPY --from=build --chown=node:node \/app\/db \.\/db/);
+  assert.match(dockerfile, /COPY --from=build --chown=node:node \/app\/campaigns\.json \.\/campaigns\.json/);
+  assert.match(dockerfile, /COPY --from=build --chown=node:node \/app\/flex \.\/flex/);
   assert.doesNotMatch(dockerfile, /LINE_CHANNEL_SECRET|ACCESS_TOKEN|ENCRYPTION_KEY|PASSWORD=/);
 
   assert.match(nginx, /limit_req_zone .* rate=15r\/s/);

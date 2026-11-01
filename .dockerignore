@@ -4,7 +4,7 @@ dist
 .github
 qa-screenshots
 staging-backups
-audit
+/audit
 logs
 tmp
 temp

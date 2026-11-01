@@ -17,10 +17,10 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/db ./db
-COPY --from=build /app/campaigns.json ./campaigns.json
-COPY --from=build /app/flex ./flex
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/db ./db
+COPY --from=build --chown=node:node /app/campaigns.json ./campaigns.json
+COPY --from=build --chown=node:node /app/flex ./flex
 USER node
 EXPOSE 8787
 CMD ["node", "dist/api/server.js"]

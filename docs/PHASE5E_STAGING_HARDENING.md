@@ -1,6 +1,6 @@
 # Phase 5E — Staging Hardening, CI และ Runbook
 
-สถานะ: **local/staging preparation เท่านั้น** — ไม่มีการ deploy, ไม่เชื่อม cloud, ไม่ apply migration 012, ไม่เปิด LINE Live/Webhook
+สถานะ: **deployed บน staging host แยก** — live ที่ `https://13-212-244-219.sslip.io/` (branch `staging-deploy-2026-11-01`, host `line-ccc-staging` Lightsail ap-southeast-1a); ไม่ apply migration 012 เพิ่มเติม, ไม่เปิด LINE Live/Webhook, DRY_RUN เหมือนเดิม
 
 ## สิ่งที่ Phase 5E เพิ่ม
 
@@ -115,6 +115,21 @@ Guard rails:
 5. ชี้ `DATABASE_URL` ของ stack ชั่วคราวไปที่ drill DB เฉพาะกรณีซ้อม; ห้ามสลับ production data
 6. บันทึกเวลา, dump ที่ใช้, ผลตรวจ และผู้ดำเนินการลง worklog
 
+บน staging host ที่ไม่มี PostgreSQL client ให้ใช้ container แทน (ซ้อมจริง 2026-11-01 ผ่านทั้งคู่):
+
+```bash
+# backup (เขียนไฟล์ลง ./backups ของเครื่อง)
+docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges' \
+  > "backups/$(date -u +%Y%m%dT%H%M%SZ).dump"
+
+# restore drill
+docker exec line-ccc-postgres-staging createdb -U line_ccc line_ccc_restore_drill
+docker exec -i line-ccc-postgres-staging pg_restore -U line_ccc -d line_ccc_restore_drill \
+  --no-owner --no-privileges < backups/<stamp>.dump
+docker exec line-ccc-postgres-staging dropdb -U line_ccc line_ccc_restore_drill
+```
+
 ## Acceptance checklist
 
 - [x] CI มี job สำหรับ PG ครบ (line-login, referral, webhook, delivery, tenant, phase4a, phase4b, integration)
@@ -127,14 +142,14 @@ Guard rails:
 - [x] smoke/backup/restore/audit scripts พร้อม guard
 - [x] tests Phase 5E ผ่านในเครื่อง (9/9)
 - [x] ทดสอบ compose/Caddy บนเครื่องที่มี Docker — build 3 images, migrations 001–012 บน DB ว่าง, seed 7 campaigns, Caddy HTTPS 200, smoke 16/16 (login/ops/audit/logout), worker 0 restart (2026-11-01)
-- [ ] เชื่อม cloud read-only audit และเก็บหลักฐานจริง (ต้องมี `AUDIT_DATABASE_URL` + `psql`)
-- [ ] สำรอง/restore drill บน staging จริง (ต้องมี `BACKUP_DATABASE_URL`/`RESTORE_DATABASE_URL` + PostgreSQL client tools)
+- [x] cloud read-only audit กับ staging จริง (2026-11-01): migrations 001–012 ครบ, 25 ตารางครบ ไม่มีแปลกปลอม, RLS เปิดเฉพาะ 3 ตาราง line_customer_* แบบ 0 policy, role line_ccc เป็น superuser+BYPASSRLS (posture เดิมที่ Tier A/B จะ tighten), FK ไร้ leading index 25 ตัว
+- [x] backup/restore drill บน staging จริง (2026-11-01): dump 93,599 bytes ผ่าน PGDMP+sha256, restore เข้า drill DB แล้วนับแถวตรงกับ live เป๊ะ ก่อน drop
 
 ## Limits ที่ยังค้าง
 
-- ยังไม่มีการ deploy ขึ้น `13-251-108-245.sslip.io` หรือ cloud ใด ๆ
-- เตรียม host สำหรับเครื่อง staging แยกแล้วที่ `deploy/host-bootstrap.sh` (Docker, swap, ufw, fail2ban, journald cap) แต่ยังไม่สร้างเครื่องและไม่ deploy
-- migration 012 ยังไม่ถูก apply; ไม่มี RLS/grant change จากเฟสนี้
+- deploy จริงแล้วบนเครื่อง staging แยก `line-ccc-staging` (ไม่ใช่ shared preview host); bootstrap ผ่าน `deploy/host-bootstrap.sh` (refuse ถ้า 80/443 ถูกจอง)
+- migration 001–012 apply แล้วบน staging; migration 012 เป็นล่าสุด — ไม่มี RLS/grant change จากเฟสนี้
+- ถ้า migrate/seed ติด `EACCES` ใน image เก่า (ไฟล์ 600/700 จาก build context) ให้ rebuild ด้วย `deploy/Dockerfile` ฉบับ `--chown=node:node`; อย่ารัน CLI ด้วย root ถาวร
 - worker ยังใช้ mock adapter เพราะ `APP_MODE=DRY_RUN`
 - การ rotate vault key ยังต้องทำ manual re-connect; ยังไม่มี re-encrypt CLI
 - แนะนำตั้ง external uptime check และ alert delivery (เช่น LINE Notify/อีเมล) ใน Phase 5F
