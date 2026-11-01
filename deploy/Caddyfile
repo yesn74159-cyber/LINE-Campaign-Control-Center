@@ -4,11 +4,7 @@
 	email {$ACME_EMAIL:ops@example.invalid}
 }
 
-{$STAGING_DOMAIN:localhost} {
-	# Local rehearsal keeps an internal CA; real staging sets CADDY_TLS to an email
-	# so Caddy obtains a public certificate through ACME.
-	tls {$CADDY_TLS:internal}
-
+(tls_edge) {
 	encode zstd gzip
 	request_body {
 		max_size 1MB
@@ -31,4 +27,18 @@
 		output stdout
 		format console
 	}
+}
+
+# Local rehearsal keeps an internal CA; real staging sets CADDY_TLS to an email
+# so Caddy obtains a public certificate through ACME.
+{$STAGING_DOMAIN:localhost} {
+	tls {$CADDY_TLS:internal}
+	import tls_edge
+}
+
+# Optional second name (e.g. the sslip.io alias kept after the real domain
+# lands). Unset STAGING_ALT_DOMAIN to drop the block.
+{$STAGING_ALT_DOMAIN:localhost} {
+	tls {$CADDY_TLS:internal}
+	import tls_edge
 }
