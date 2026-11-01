@@ -119,6 +119,7 @@ services:
       - "443:443/udp"
     environment:
       STAGING_DOMAIN: ${STAGING_DOMAIN:-localhost}
+      STAGING_ALT_DOMAIN: ${STAGING_ALT_DOMAIN:-13-212-244-219.sslip.io}
       CADDY_TLS: ${CADDY_TLS:-internal}
       ACME_EMAIL: ${ACME_EMAIL:-ops@example.invalid}
     volumes:
