@@ -68,9 +68,20 @@ test('Workspace page renders, loads members, and updates workspace via API', asy
     await page.getByText('บันทึกชื่อ Workspace เรียบร้อย').waitFor();
     assert.equal(requests.filter(x => x.path === '/api/workspace/settings' && x.method === 'PATCH').length, 1);
     assert.ok(requests.some(x => x.path === '/api/workspace/settings' && x.method === 'PATCH' && x.csrf === 'qa-token'));
-    await page.getByText('NO SECRET INPUT').waitFor();
-    assert.equal(await page.locator('#live-oa-token').count(), 0);
-    assert.equal(await page.locator('#live-oa-secret').count(), 0);
+    await page.getByText('OWNER ONLY · ENCRYPTED IN SERVER VAULT').waitFor();
+    assert.equal(await page.locator('#live-oa-token').count(), 1);
+    assert.equal(await page.locator('#live-oa-secret').count(), 1);
+    await page.locator('#oa-provider-id').fill('line-oa-qa');
+    await page.locator('#oa-channel-id').fill('12345678901');
+    await page.locator('#live-oa-token').fill('qa-channel-access-token-value');
+    await page.locator('#live-oa-secret').fill('qa-channel-secret-value');
+    await page.getByRole('button', { name:'เชื่อมต่อ LINE OA' }).click();
+    await page.getByRole('button', { name:'คัดลอก Webhook URL' }).waitFor({ timeout:10000 });
+    assert.equal(await page.locator('input[aria-label="LINE webhook URL"]').inputValue(), 'http://127.0.0.1:' + port + '/api/webhooks/line/line-oa-qa');
+    const visible = await page.locator('body').innerText();
+    assert.ok(!visible.includes('qa-channel-access-token-value'), 'channel access token must never be rendered back');
+    assert.ok(!visible.includes('qa-channel-secret-value'), 'channel secret must never be rendered back');
+    assert.ok(requests.some(x => x.path === '/api/workspace/oa-connect' && x.method === 'POST' && x.csrf === 'qa-token'));
     assert.deepEqual(errors, []);
     console.log('WORKSPACE_BROWSER_UI_PASS');
   } finally { if (browser) await browser.close(); }
