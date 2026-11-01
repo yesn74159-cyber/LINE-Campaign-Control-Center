@@ -59,7 +59,7 @@ export default function ConnectLineOa({ isOwner }: { isOwner: boolean }) {
       const payload = await response.json().catch(() => null) as (ConnectResponse & { error?: string }) | null;
       if (!response.ok) throw new Error(payload?.error || 'เชื่อมต่อไม่สำเร็จ (' + response.status + ')');
       setForm(EMPTY_FORM);
-      setWebhookUrl(`${window.location.origin}/api/webhooks/line/${encodeURIComponent(providerId)}`);
+      setWebhookUrl(`${window.location.origin}/api/webhooks/line/${encodeURIComponent(payload?.oaId || '')}`);
       setNotice(`เชื่อมต่อ ${payload?.displayName || providerId} (${payload?.basicId || ''}) แล้ว — token ผ่านการตรวจจาก LINE, ยังรอ signed webhook แรกเพื่อยืนยัน Channel Secret`);
       await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'เชื่อมต่อไม่สำเร็จ'); }
@@ -69,6 +69,11 @@ export default function ConnectLineOa({ isOwner }: { isOwner: boolean }) {
   async function copyWebhookUrl() {
     try { await navigator.clipboard.writeText(webhookUrl); setNotice('คัดลอก Webhook URL แล้ว — ไปวางใน LINE Developers console แล้วเปิด Use webhook'); }
     catch { setNotice('คัดลอกอัตโนมัติไม่สำเร็จ กรุณาเลือกข้อความในช่องลิงก์แล้วคัดลอกเอง'); }
+  }
+
+  async function copyText(text: string) {
+    try { await navigator.clipboard.writeText(text); setNotice('คัดลอก Webhook URL ของ OA นี้แล้ว'); }
+    catch { setNotice('คัดลอกอัตโนมัติไม่สำเร็จ กรุณาเลือกข้อความ URL ในตารางแล้วคัดลอกเอง'); }
   }
 
   return <section className="panel">
@@ -107,7 +112,12 @@ export default function ConnectLineOa({ isOwner }: { isOwner: boolean }) {
       <tbody>{connections.map(row=><tr key={row.oaId}>
         <td>{row.displayName} ({row.basicId})</td>
         <td>{row.storedEncrypted && row.accessTokenCheckedAt ? 'มี reference ฝั่ง server' : 'Mock / ไม่ตั้งค่า'}</td>
-        <td>{webhookLabel(row.channelStatus, row.verifiedAt)}</td><td>ปิด</td>
+        <td>{webhookLabel(row.channelStatus, row.verifiedAt)}
+          {row.storedEncrypted && <div className="form-note">
+            <code>{`${window.location.origin}/api/webhooks/line/${row.oaId}`}</code>
+            <button type="button" onClick={() => void copyText(`${window.location.origin}/api/webhooks/line/${row.oaId}`)}>คัดลอก</button>
+          </div>}
+        </td><td>ปิด</td>
       </tr>)}</tbody>
     </table></div>
   </section>;

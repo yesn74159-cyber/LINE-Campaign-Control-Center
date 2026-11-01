@@ -77,7 +77,7 @@ test('Workspace page renders, loads members, and updates workspace via API', asy
     await page.locator('#live-oa-secret').fill('qa-channel-secret-value');
     await page.getByRole('button', { name:'เชื่อมต่อ LINE OA' }).click();
     await page.getByRole('button', { name:'คัดลอก Webhook URL' }).waitFor({ timeout:10000 });
-    assert.equal(await page.locator('input[aria-label="LINE webhook URL"]').inputValue(), 'http://127.0.0.1:' + port + '/api/webhooks/line/line-oa-qa');
+    assert.equal(await page.locator('input[aria-label="LINE webhook URL"]').inputValue(), 'http://127.0.0.1:' + port + '/api/webhooks/line/sample-oa');
     const visible = await page.locator('body').innerText();
     assert.ok(!visible.includes('qa-channel-access-token-value'), 'channel access token must never be rendered back');
     assert.ok(!visible.includes('qa-channel-secret-value'), 'channel secret must never be rendered back');
