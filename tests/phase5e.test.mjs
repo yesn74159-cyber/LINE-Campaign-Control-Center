@@ -109,7 +109,9 @@ test('Deployment assets keep secrets out of build layers and add edge protection
   assert.match(nginx, /Content-Security-Policy/);
   assert.match(nginx, /X-Frame-Options "DENY"/);
   assert.match(nginx, /X-Content-Type-Options "nosniff"/);
-  assert.match(nginx, /proxy_pass http:\/\/api:8787/);
+  assert.match(nginx, /resolver 127\.0\.0\.11 valid=10s ipv6=off;/);
+  assert.match(nginx, /set \$api_upstream http:\/\/api:8787;/);
+  assert.match(nginx, /proxy_pass \$api_upstream;/);
   assert.match(nginx, /location ~ \/\\\. \{\n\s+deny all;/);
   assert.doesNotMatch(nginx, /proxy_pass https:\/\/api/);
 
