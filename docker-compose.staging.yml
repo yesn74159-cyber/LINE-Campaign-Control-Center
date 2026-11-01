@@ -69,8 +69,11 @@ services:
     # No ports, no healthcheck endpoint: liveness is watched through the
     # WORKER_STALE alert on /api/ops/delivery-health.
     environment:
-      APP_MODE: DRY_RUN
-      LINE_LIVE_ENABLED: "false"
+      # The worker follows the host release gate, so one .env.staging switch can be
+      # used to rehearse and then test a LIVE campaign. Each job still picks its own
+      # transport and fails closed when the gate is off; the webhook stays off here.
+      APP_MODE: ${APP_MODE:-DRY_RUN}
+      LINE_LIVE_ENABLED: ${LINE_LIVE_ENABLED:-false}
       LINE_WEBHOOK_ENABLED: "false"
     stop_grace_period: 30s
 

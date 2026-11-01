@@ -74,8 +74,8 @@ test('Compose keeps only Caddy public and the worker private', () => {
   assert.doesNotMatch(admin, /^\s+ports:/m, 'admin is reached through Caddy only');
   assert.match(postgres, /127\.0\.0\.1:55433:5432/, 'PostgreSQL is loopback-only');
   assert.match(worker, /command: \["node", "dist\/api\/worker\.js"\]/);
-  assert.match(worker, /APP_MODE: DRY_RUN/);
-  assert.match(worker, /LINE_LIVE_ENABLED: "false"/);
+  assert.match(worker, /APP_MODE: \$\{APP_MODE:-DRY_RUN\}/, 'the worker defaults to DRY_RUN and only follows the host gate');
+  assert.match(worker, /LINE_LIVE_ENABLED: \$\{LINE_LIVE_ENABLED:-false\}/, 'live delivery stays off unless the host file opens it');
   assert.match(worker, /LINE_WEBHOOK_ENABLED: "false"/);
   assert.match(compose, /env_file:\n\s+- \.env\.staging/);
   assert.match(compose, /read_only: true/);
