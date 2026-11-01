@@ -124,14 +124,17 @@ export class LiveLineMessagingAdapter implements MessagingAdapter {
 }
 
 /**
- * Selects the adapter from the runtime mode. LIVE requires both the explicit
- * mode switch and the live gate; the vault key is read from the environment.
+ * Selects the transport for one job. The job's own mode decides it, never the
+ * host's APP_MODE: a DRY_RUN job stays on the mock transport even on a LIVE
+ * host, and a LIVE job needs the mode switch, the release gate, the vault and
+ * PostgreSQL together.
  */
-export function createMessagingAdapter(input: { pool: Pool | null; env?: NodeJS.ProcessEnv }): MessagingAdapter {
+export function createMessagingAdapter(input: { pool: Pool | null; jobMode: string; env?: NodeJS.ProcessEnv }): MessagingAdapter {
   const env = input.env || process.env;
-  const appMode = (env.APP_MODE || 'DRY_RUN').toUpperCase();
-  if (appMode === 'DRY_RUN') return new MockLineMessagingAdapter();
-  if (appMode !== 'LIVE') throw new OaPolicyError('LIVE_MODE_LOCKED', 'worker requires APP_MODE=DRY_RUN or APP_MODE=LIVE');
+  const jobMode = input.jobMode.toUpperCase();
+  if (jobMode === 'DRY_RUN') return new MockLineMessagingAdapter();
+  if (jobMode !== 'LIVE') throw new OaPolicyError('JOB_MODE_INVALID', 'a scheduler job must be DRY_RUN or LIVE');
+  if ((env.APP_MODE || 'DRY_RUN').toUpperCase() !== 'LIVE') throw new OaPolicyError('LIVE_MODE_LOCKED', 'worker requires APP_MODE=DRY_RUN or APP_MODE=LIVE');
   if (env.LINE_LIVE_ENABLED !== 'true') throw new OaPolicyError('LIVE_MODE_LOCKED', 'Live LINE adapter is disabled by default');
   if (!input.pool) throw new OaPolicyError('DATABASE_REQUIRED', 'Live delivery requires a PostgreSQL credential vault');
   const key = vaultKey(env.LINE_CREDENTIAL_ENCRYPTION_KEY);
@@ -140,6 +143,6 @@ export function createMessagingAdapter(input: { pool: Pool | null; env?: NodeJS.
     new HttpTransport(),
     ({ oaId, workspaceId }) => resolveOaAccessToken(pool, { workspaceId, oaId, key }),
     undefined,
-    { appMode, liveEnabled: true }
+    { appMode: 'LIVE', liveEnabled: true }
   );
 }

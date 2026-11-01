@@ -83,6 +83,23 @@ export function buildManualTextPushBody(input: { lineUserId: unknown; text: unkn
 }
 
 /**
+ * A Flex card pushed to one recipient from the manual screen. The document rules are
+ * the campaign rules (assertFlexJson), only the error wording is aimed at someone
+ * typing in a browser, because the same screen is used to share a card with a friend.
+ */
+export function buildManualFlexPushBody(input: { lineUserId: unknown; flexMessage: unknown }): { to: string; messages: Array<Record<string, unknown>> } {
+  const userId = input.lineUserId;
+  if (typeof userId !== 'string' || !/^U[0-9a-f]{32}$/i.test(userId)) {
+    throw new Error('recipient must be a LINE userId (U followed by 32 hex characters)');
+  }
+  const flex = assertFlexJson(input.flexMessage);
+  if (typeof flex.altText !== 'string' || flex.altText.trim().length === 0) {
+    throw new Error('a Flex card needs altText — the short line shown in the notification');
+  }
+  return { to: userId, messages: [structuredClone(flex)] };
+}
+
+/**
  * Used by a future live scheduler to forbid accidental dry-run/live
  * crossovers, rather than using a default mode.
  */

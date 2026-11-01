@@ -75,17 +75,19 @@ test('payload builder is deterministic, frozen, and shared by mock and live adap
   assert.equal(transport.requests[0].token, '');
 });
 
-test('adapter factory selects mock in DRY_RUN and keeps LIVE locked until every gate is set', () => {
-  assert.equal(createMessagingAdapter({ pool: null, env: { APP_MODE: 'DRY_RUN' } }).kind, 'mock');
-  assert.equal(createMessagingAdapter({ pool: null, env: { APP_MODE: 'dry_run', LINE_LIVE_ENABLED: 'true' } }).kind, 'mock');
+test('adapter factory follows the job mode and keeps LIVE locked until every gate is set', () => {
+  assert.equal(createMessagingAdapter({ pool: null, jobMode: 'DRY_RUN', env: { APP_MODE: 'DRY_RUN' } }).kind, 'mock');
+  assert.equal(createMessagingAdapter({ pool: null, jobMode: 'DRY_RUN', env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true' } }).kind, 'mock');
+  assert.equal(createMessagingAdapter({ pool: null, jobMode: 'dry_run', env: {} }).kind, 'mock');
 
-  assert.throws(() => createMessagingAdapter({ pool: null, env: { APP_MODE: 'LIVE' } }), (error) => error instanceof OaPolicyError && error.code === 'LIVE_MODE_LOCKED');
-  assert.throws(() => createMessagingAdapter({ pool: null, env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'false' } }), /disabled by default/);
-  assert.throws(() => createMessagingAdapter({ pool: null, env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true' } }), (error) => error instanceof OaPolicyError && error.code === 'DATABASE_REQUIRED');
-  assert.throws(() => createMessagingAdapter({ pool: {}, env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true', LINE_CREDENTIAL_ENCRYPTION_KEY: 'short' } }), /vault is not configured/);
-  assert.throws(() => createMessagingAdapter({ pool: {}, env: { APP_MODE: 'STAGING' } }), (error) => error instanceof OaPolicyError && error.code === 'LIVE_MODE_LOCKED');
+  assert.throws(() => createMessagingAdapter({ pool: null, jobMode: 'LIVE', env: { APP_MODE: 'LIVE' } }), (error) => error instanceof OaPolicyError && error.code === 'LIVE_MODE_LOCKED');
+  assert.throws(() => createMessagingAdapter({ pool: null, jobMode: 'LIVE', env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'false' } }), /disabled by default/);
+  assert.throws(() => createMessagingAdapter({ pool: null, jobMode: 'LIVE', env: { APP_MODE: 'DRY_RUN', LINE_LIVE_ENABLED: 'true' } }), (error) => error instanceof OaPolicyError && error.code === 'LIVE_MODE_LOCKED');
+  assert.throws(() => createMessagingAdapter({ pool: null, jobMode: 'LIVE', env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true' } }), (error) => error instanceof OaPolicyError && error.code === 'DATABASE_REQUIRED');
+  assert.throws(() => createMessagingAdapter({ pool: {}, jobMode: 'LIVE', env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true', LINE_CREDENTIAL_ENCRYPTION_KEY: 'short' } }), /vault is not configured/);
+  assert.throws(() => createMessagingAdapter({ pool: {}, jobMode: 'STAGING', env: { APP_MODE: 'LIVE' } }), (error) => error instanceof OaPolicyError && error.code === 'JOB_MODE_INVALID');
 
-  const live = createMessagingAdapter({ pool: { query: async () => ({ rows: [] }) }, env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true', LINE_CREDENTIAL_ENCRYPTION_KEY: key.toString('base64') } });
+  const live = createMessagingAdapter({ pool: { query: async () => ({ rows: [] }) }, jobMode: 'LIVE', env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true', LINE_CREDENTIAL_ENCRYPTION_KEY: key.toString('base64') } });
   assert.equal(live.kind, 'live');
   assert.throws(() => new LiveLineMessagingAdapter(new MockTransport(), async () => null, undefined, { appMode: 'LIVE', liveEnabled: true }), (error) => error instanceof OaPolicyError && error.code === 'HTTP_TRANSPORT_REQUIRED');
 });
@@ -184,7 +186,7 @@ function fakeRepo({ job, deliveries, contexts, readiness = () => readinessBase, 
     async markOutboxCompleted(id, workerId, result) { calls.push(['markOutboxCompleted', id, workerId, result]); const item = state.deliveries.find((entry) => entry.id === id); item.status = 'SENT'; item.providerStatus = result.providerStatus; item.providerRequestId = result.providerRequestId; },
     async markOutboxFailure(id, workerId, error, status) { calls.push(['markOutboxFailure', id, status, error]); const item = state.deliveries.find((entry) => entry.id === id); item.status = status; item.lastError = error; },
     async markJobCompleted(id, workerId) { calls.push(['markJobCompleted', id, workerId]); state.job.status = 'COMPLETED'; return { ...state.job }; },
-    async markJobFailure(id, workerId, error, retryAt) { calls.push(['markJobFailure', id, workerId, retryAt]); state.job.status = retryAt ? 'RETRYABLE' : 'FAILED'; return { ...state.job }; }
+    async markJobFailure(id, workerId, error, retryAt) { calls.push(['markJobFailure', id, workerId, retryAt, error]); state.job.status = retryAt ? 'RETRYABLE' : 'FAILED'; state.job.lastError = error; return { ...state.job }; }
   };
 }
 
@@ -221,6 +223,32 @@ test('worker sends every pending recipient in DRY_RUN, reserves without counting
   assert.deepEqual(repo.state.deliveries.map((item) => item.status), ['SENT', 'SENT']);
   assert.ok(repo.calls.some((call) => call[0] === 'markJobCompleted'));
   assert.equal(repo.calls.filter((call) => call[0] === 'getCampaignReadiness').length, 3, 'policy is re-read before the job and before every recipient');
+});
+
+test('worker picks the transport from the job mode, so a DRY_RUN job cannot reach LINE on a LIVE host', async () => {
+  const fixture = dryRunFixture();
+  const repo = fakeRepo(fixture);
+  const env = { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'true', LINE_CREDENTIAL_ENCRYPTION_KEY: key.toString('base64') };
+  const built = [];
+  const outcome = await runWorkerOnce(repo, (job) => {
+    const adapter = createMessagingAdapter({ pool: { query: async () => ({ rows: [] }) }, env, jobMode: job.mode });
+    built.push(adapter.kind);
+    return adapter;
+  }, { jobId: 'job-dry', workerId: 'worker-mode-guard', now: new Date('2026-11-01T10:00:00.000Z') });
+  assert.equal(outcome.status, 'completed');
+  assert.deepEqual(built, ['mock']);
+  assert.deepEqual(repo.calls.filter((call) => call[0] === 'reserveDeliverySlot').map((call) => call[1].count), [false, false]);
+});
+
+test('a LIVE job on a host without the release gate fails closed instead of falling back to mock', async () => {
+  const job = liveJob();
+  const deliveries = [fakeDelivery('d1', userId, { jobId: job.id })];
+  const fixture = { job, deliveries, contexts: { d1: { jobId: job.id, workspaceId, oaId, campaignRevisionId: 'rev-1', recipientKey: userId, flexJson: flex } } };
+  const repo = fakeRepo(fixture);
+  const outcome = await runWorkerOnce(repo, (entry) => createMessagingAdapter({ pool: {}, env: { APP_MODE: 'LIVE', LINE_LIVE_ENABLED: 'false' }, jobMode: entry.mode }), { jobId: job.id, workerId: 'worker-gate-off', now: new Date('2026-11-01T10:00:00.000Z') });
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.job.lastError, /disabled by default/);
+  assert.equal(repo.calls.some((call) => call[0] === 'markOutboxSending'), false, 'no delivery is claimed when the gate is off');
 });
 
 test('worker skips already-sent deliveries so a re-run is idempotent', async () => {

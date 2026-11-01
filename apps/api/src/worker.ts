@@ -6,10 +6,10 @@ import { createPostgresRepository } from './repository.js';
 import { createMessagingAdapter, ProviderTransportError, type MessagingAdapter } from './lineAdapter.js';
 import { OaPolicyError, validateDispatchPolicy } from './oaPolicy.js';
 import { buildDeliveryPayload } from './livePushPayload.js';
-import type { QuotaReservation } from './types.js';
+import type { QuotaReservation, SchedulerJob } from './types.js';
 import type { Repository } from './repository.js';
 
-export async function runWorkerOnce(repository: Repository, adapter: MessagingAdapter, options: { workerId?: string; jobId?: string; now?: Date; leaseMs?: number; maxAttempts?: number; retryBaseMs?: number } = {}) {
+export async function runWorkerOnce(repository: Repository, adapter: MessagingAdapter | ((job: SchedulerJob) => MessagingAdapter), options: { workerId?: string; jobId?: string; now?: Date; leaseMs?: number; maxAttempts?: number; retryBaseMs?: number } = {}) {
   const now = options.now || new Date();
   const workerId = options.workerId || `worker-${randomUUID()}`;
   const leaseMs = options.leaseMs ?? 60_000;
@@ -21,6 +21,7 @@ export async function runWorkerOnce(repository: Repository, adapter: MessagingAd
   let activeOutboxId: string | undefined;
   let slot: QuotaReservation | null = null;
   try {
+    const sendAdapter = typeof adapter === 'function' ? adapter(job) : adapter;
     const readDispatchPolicy = async () => {
       const readiness = job.workspaceId ? await repository.getCampaignReadiness(job.campaignId, job.workspaceId, job.oaId) : null;
       if (readiness && !readiness.canSchedule) throw new OaPolicyError('CAMPAIGN_NOT_READY', readiness.blockers.join('; ') || 'campaign is not ready for delivery');
@@ -44,7 +45,7 @@ export async function runWorkerOnce(repository: Repository, adapter: MessagingAd
       await repository.markOutboxSending(delivery.id, workerId);
       slot = await repository.reserveDeliverySlot({ workspaceId: job.workspaceId, oaId: job.oaId, count: job.mode === 'LIVE', now });
       try {
-        const result = await adapter.send({ job, policy, delivery, payload });
+        const result = await sendAdapter.send({ job, policy, delivery, payload });
         await repository.markOutboxCompleted(delivery.id, workerId, result);
       } catch (error) {
         if (!(error instanceof ProviderTransportError && error.uncertain)) {
@@ -81,7 +82,7 @@ export async function startWorker() {
   const database = createDatabase();
   if (!database.pool) throw new Error('worker requires DATABASE_URL');
   const repository = createPostgresRepository(database.pool);
-  const adapter = createMessagingAdapter({ pool: database.pool });
+  const adapterForJob = (job: SchedulerJob) => createMessagingAdapter({ pool: database.pool, jobMode: job.mode });
   const once = process.argv.includes('--once');
   const pollMs = Number(process.env.WORKER_POLL_MS || 1000);
   let stopped = false;
@@ -90,7 +91,7 @@ export async function startWorker() {
   process.once('SIGTERM', stop);
   try {
     do {
-      await runWorkerOnce(repository, adapter);
+      await runWorkerOnce(repository, adapterForJob);
       if (!once && !stopped) await new Promise((resolve) => setTimeout(resolve, pollMs));
     } while (!once && !stopped);
   } finally {

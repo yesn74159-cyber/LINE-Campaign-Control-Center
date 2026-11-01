@@ -4,8 +4,9 @@ import type { Pool } from 'pg';
 import type { AdminUser, SchedulerJob } from './types.js';
 import type { Repository } from './repository.js';
 import { createFixedWindowLimiter } from './security.js';
-import { buildManualTextPushBody, MANUAL_PUSH_TEXT_MAX_CHARS } from './livePushPayload.js';
-import { HttpTransport, LiveLineMessagingAdapter, MockLineMessagingAdapter, ProviderTransportError, type MessagingAdapter } from './lineAdapter.js';
+import { buildManualFlexPushBody, buildManualTextPushBody, MANUAL_PUSH_TEXT_MAX_CHARS } from './livePushPayload.js';
+import { HttpTransport, createMessagingAdapter, ProviderTransportError, type MessagingAdapter } from './lineAdapter.js';
+import { OaPolicyError, isLiveSendEnabled } from './oaPolicy.js';
 import { resolveOaAccessToken, vaultKey, checkLineProfile } from './lineOaConnect.js';
 
 type Caller = FastifyRequest & { user?: AdminUser };
@@ -15,8 +16,18 @@ const PREVIEW_TTL_MINUTES = 10;
 type OaState = { id: string; display_name: string; provider_id: string; enabled: boolean; kill_switch: boolean; system_kill_switch: boolean };
 type PreviewRow = {
   id: string; workspace_id: string; oa_integration_id: string; recipient_key: string;
-  message_text: string; mode: 'DRY_RUN' | 'LIVE'; line_retry_key: string; expires_at: string;
+  message_text: string; message_type: 'text' | 'flex'; flex_json: Record<string, unknown> | null;
+  mode: 'DRY_RUN' | 'LIVE'; line_retry_key: string; expires_at: string;
 };
+
+/** The adapter body is rebuilt from the stored preview, never from the browser. */
+function storedMessages(row: PreviewRow): Array<Record<string, unknown>> {
+  if (row.message_type === 'flex') {
+    if (!row.flex_json) throw new Error('the stored flex card is missing from this preview');
+    return [row.flex_json];
+  }
+  return [{ type: 'text', text: row.message_text }];
+}
 
 function sendFailure(code: string, message: string) { return { code, message }; }
 
@@ -77,16 +88,18 @@ export function registerPushMessageRoutes(
     return Boolean(result.rowCount);
   }
 
-  function selectAdapter(): { adapter: MessagingAdapter; mode: 'DRY_RUN' | 'LIVE' } | { error: ReturnType<typeof sendFailure> } {
-    const appMode = (env.APP_MODE || 'DRY_RUN').toUpperCase();
-    if (appMode === 'DRY_RUN') return { adapter: new MockLineMessagingAdapter(), mode: 'DRY_RUN' };
-    if (appMode !== 'LIVE') return { error: sendFailure('APP_MODE_INVALID', 'APP_MODE must be DRY_RUN or LIVE') };
-    if (env.LINE_LIVE_ENABLED !== 'true') return { error: sendFailure('LIVE_GATE_OFF', 'LIVE mode requires the explicit live release gate') };
-    const key = vaultKey(env.LINE_CREDENTIAL_ENCRYPTION_KEY);
-    return {
-      adapter: new LiveLineMessagingAdapter(new HttpTransport(), ({ oaId, workspaceId }) => resolveOaAccessToken(pool!, { workspaceId, oaId, key }), undefined, { appMode: 'LIVE', liveEnabled: true }),
-      mode: 'LIVE'
-    };
+  /**
+   * The transport follows the mode stored on the request, never the host's
+   * APP_MODE alone: a DRY_RUN request stays on the mock adapter even while the
+   * server is LIVE, and only the release gate can produce a LIVE transport.
+   */
+  function selectAdapter(mode: 'DRY_RUN' | 'LIVE'): { adapter: MessagingAdapter; mode: 'DRY_RUN' | 'LIVE' } | { error: ReturnType<typeof sendFailure> } {
+    if (mode === 'LIVE' && !isLiveSendEnabled(env)) return { error: sendFailure('LIVE_GATE_OFF', 'LIVE mode requires the explicit live release gate') };
+    try {
+      return { adapter: createMessagingAdapter({ pool, env, jobMode: mode }), mode };
+    } catch (reason) {
+      return { error: sendFailure(reason instanceof OaPolicyError ? reason.code : 'ADAPTER_UNAVAILABLE', reason instanceof Error ? reason.message : 'LINE transport is unavailable') };
+    }
   }
 
   /**
@@ -116,17 +129,30 @@ export function registerPushMessageRoutes(
     }
   }
 
-  app.post<{ Body: { oaId?: string; recipient?: string; text?: string } }>(
+  app.post<{ Body: { oaId?: string; recipient?: string; text?: string; flex?: unknown; mode?: 'DRY_RUN' | 'LIVE' } }>(
     '/api/messages/push/preview',
-    { preHandler: authorize, schema: { body: { type: 'object', required: ['oaId', 'recipient', 'text'], additionalProperties: false, properties: { oaId: { type: 'string', minLength: 1, maxLength: 100 }, recipient: { type: 'string', minLength: 33, maxLength: 33 }, text: { type: 'string', minLength: 1, maxLength: MANUAL_PUSH_TEXT_MAX_CHARS * 4 } } } } },
+    { preHandler: authorize, schema: { body: { type: 'object', required: ['oaId', 'recipient'], additionalProperties: false, properties: { oaId: { type: 'string', minLength: 1, maxLength: 100 }, recipient: { type: 'string', minLength: 33, maxLength: 33 }, text: { type: 'string', minLength: 1, maxLength: MANUAL_PUSH_TEXT_MAX_CHARS * 4 }, flex: { type: 'object', additionalProperties: true }, mode: { type: 'string', enum: ['DRY_RUN', 'LIVE'] } } } } },
     async (request, reply) => {
       const user = (request as Caller).user!;
       if (!previewLimiter.take(user.id)) return reply.code(429).send({ error: 'preview limit reached', code: 'RATE_LIMITED' });
       const oaId = String(request.body.oaId || '');
       if (!UUID_PATTERN.test(oaId)) return reply.code(400).send({ error: 'unknown OA', code: 'OA_NOT_FOUND' });
-      let body;
-      try { body = buildManualTextPushBody({ lineUserId: request.body.recipient, text: request.body.text }); }
+      // Exactly one of the two kinds is accepted, so a stored preview always has
+      // the document the operator actually saw.
+      const hasFlex = request.body.flex !== undefined && request.body.flex !== null;
+      const hasText = typeof request.body.text === 'string' && request.body.text.trim() !== '';
+      if (hasFlex === hasText) {
+        return reply.code(400).send({ error: 'send either text or a flex card, not both', code: 'MESSAGE_INVALID' });
+      }
+      let body: { to: string; messages: Array<Record<string, unknown>> };
+      try {
+        body = hasFlex
+          ? buildManualFlexPushBody({ lineUserId: request.body.recipient, flexMessage: request.body.flex })
+          : buildManualTextPushBody({ lineUserId: request.body.recipient, text: request.body.text });
+      }
       catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid message', code: 'MESSAGE_INVALID' }); }
+      const messageType: 'text' | 'flex' = hasFlex ? 'flex' : 'text';
+      const altText = messageType === 'flex' ? String(body.messages[0]!.altText) : String(body.messages[0]!.text);
 
       const oa = await loadOaState(oaId, user.workspaceId);
       if (!oa) return reply.code(404).send({ error: 'staging OA not found in this workspace', code: 'OA_NOT_FOUND' });
@@ -136,7 +162,10 @@ export function registerPushMessageRoutes(
         return reply.code(409).send({ error: 'recipient has no active consent for this OA', code: 'CONSENT_REQUIRED' });
       }
 
-      const selected = selectAdapter();
+      // The request may force a mock dry-run; the default follows the host's
+      // APP_MODE, and a LIVE request without the release gate is refused.
+      const requestedMode: 'DRY_RUN' | 'LIVE' = request.body.mode ?? ((env.APP_MODE || 'DRY_RUN').toUpperCase() === 'LIVE' ? 'LIVE' : 'DRY_RUN');
+      const selected = selectAdapter(requestedMode);
       if ('error' in selected) return reply.code(409).send({ error: selected.error.message, code: selected.error.code });
       let recipientName = '';
       if (selected.mode === 'LIVE') {
@@ -145,14 +174,15 @@ export function registerPushMessageRoutes(
         recipientName = profile.name;
       }
       const inserted = await pool!.query<{ id: string; expires_at: string }>(
-        'insert into manual_push_requests(workspace_id,oa_integration_id,requested_by,recipient_key,message_text,mode,status,line_retry_key,recipient_display_name,expires_at) ' +
-        "values ($1,$2,$3,$4,$5,$6,'PREVIEW',$7,$8,now() + interval '" + PREVIEW_TTL_MINUTES + " minutes') returning id, expires_at",
-        [user.workspaceId, oa.id, user.email, body.to, body.messages[0]!.text, selected.mode, randomUUID(), recipientName || null]
+        'insert into manual_push_requests(workspace_id,oa_integration_id,requested_by,recipient_key,message_text,message_type,flex_json,mode,status,line_retry_key,recipient_display_name,expires_at) ' +
+        "values ($1,$2,$3,$4,$5,$6,$7,$8,'PREVIEW',$9,$10,now() + interval '" + PREVIEW_TTL_MINUTES + " minutes') returning id, expires_at",
+        [user.workspaceId, oa.id, user.email, body.to, altText, messageType, hasFlex ? JSON.stringify(body.messages[0]) : null, selected.mode, randomUUID(), recipientName || null]
       );
       const previewId = String(inserted.rows[0]!.id);
-      await audit(user, 'MANUAL_PUSH_PREVIEWED', previewId, `${oa.display_name} -> ${body.to} (${selected.mode})`);
+      await audit(user, 'MANUAL_PUSH_PREVIEWED', previewId, `${oa.display_name} -> ${body.to} · ${messageType} (${selected.mode})`);
       return reply.code(201).send({
-        previewId, oaDisplayName: oa.display_name, recipient: body.to, text: body.messages[0]!.text,
+        previewId, oaDisplayName: oa.display_name, recipient: body.to, text: altText,
+        messageType, flex: hasFlex ? body.messages[0] : null,
         mode: selected.mode, expiresAt: inserted.rows[0]!.expires_at, confirmWord: 'SEND',
         recipientName: recipientName || null
       });
@@ -174,7 +204,7 @@ export function registerPushMessageRoutes(
       const claimed = await pool!.query<PreviewRow>(
         "update manual_push_requests set status='SENDING', confirmed_at=now(), updated_at=now() " +
         "where id=$1 and workspace_id=$2 and requested_by=$3 and status='PREVIEW' and expires_at>now() " +
-        'returning id, workspace_id, oa_integration_id, recipient_key, message_text, mode, line_retry_key, expires_at',
+        'returning id, workspace_id, oa_integration_id, recipient_key, message_text, message_type, flex_json, mode, line_retry_key, expires_at',
         [previewId, user.workspaceId, user.email]
       );
       const row = claimed.rows[0];
@@ -186,9 +216,9 @@ export function registerPushMessageRoutes(
       if (!oa.enabled) return await block(reply, row.id, user, 'the selected OA is disabled', 'OA_DISABLED');
       if (!(await hasConsent(user.workspaceId, oa.provider_id, row.recipient_key))) return await block(reply, row.id, user, 'recipient has no active consent for this OA', 'CONSENT_REQUIRED');
 
-      const selected = selectAdapter();
-      if ('error' in selected || selected.mode !== row.mode) {
-        return await block(reply, row.id, user, 'runtime mode changed after the preview; create a new preview');
+      const selected = selectAdapter(row.mode);
+      if ('error' in selected) {
+        return await block(reply, row.id, user, selected.error.message, selected.error.code);
       }
       const job: SchedulerJob = {
         id: row.id, workspaceId: user.workspaceId, campaignId: 'manual-push', campaignRevisionId: undefined,
@@ -200,7 +230,7 @@ export function registerPushMessageRoutes(
         slot = await repo.reserveDeliverySlot({ workspaceId: user.workspaceId, oaId: row.oa_integration_id, count: row.mode === 'LIVE' });
         const result = await selected.adapter.send({
           job,
-          payload: { preview: false, to: row.recipient_key, messages: [{ type: 'text', text: row.message_text }] }
+          payload: { preview: false, to: row.recipient_key, messages: storedMessages(row) }
         });
         await pool!.query(
           "update manual_push_requests set status='SENT', provider_status=$2, provider_request_id=$3, provider_message_id=$4, updated_at=now() where id=$1",
@@ -235,12 +265,12 @@ export function registerPushMessageRoutes(
   app.get('/api/messages/push/history', { preHandler: authorize }, async (request) => {
     const user = (request as Caller).user!;
     const result = await pool!.query(
-      'select id, recipient_key, message_text, mode, status, provider_status, provider_request_id, provider_message_id, recipient_display_name, last_error, oa_integration_id, created_at, confirmed_at ' +
+      'select id, recipient_key, message_text, message_type, mode, status, provider_status, provider_request_id, provider_message_id, recipient_display_name, last_error, oa_integration_id, created_at, confirmed_at ' +
       'from manual_push_requests where workspace_id=$1 order by created_at desc limit 10',
       [user.workspaceId]
     );
     return { pushes: result.rows.map((row) => ({
-      id: String(row.id), recipient: String(row.recipient_key), text: String(row.message_text), mode: String(row.mode),
+      id: String(row.id), recipient: String(row.recipient_key), text: String(row.message_text), messageType: String(row.message_type), mode: String(row.mode),
       status: String(row.status), providerStatus: row.provider_status ?? null, providerRequestId: row.provider_request_id ?? null,
       providerMessageId: row.provider_message_id ?? null, recipientName: row.recipient_display_name ?? null,
       error: row.last_error ?? null, oaId: String(row.oa_integration_id), createdAt: String(row.created_at), confirmedAt: row.confirmed_at ? String(row.confirmed_at) : null

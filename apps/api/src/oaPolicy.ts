@@ -29,6 +29,10 @@ export function validateDispatchPolicy(snapshot: PolicySnapshot, options: { allo
   return { allowed: true as const, outbound: Boolean(options.allowLive), dryRun: !options.allowLive };
 }
 
+export function isLiveSendEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return (env.APP_MODE || 'DRY_RUN').toUpperCase() === 'LIVE' && env.LINE_LIVE_ENABLED === 'true';
+}
+
 export function classifyProviderError(status: number): { code: string; retryable: boolean; retryAfterMs?: number } {
   if (status === 400) return { code: 'PROVIDER_BAD_REQUEST', retryable: false };
   if (status === 401) return { code: 'PROVIDER_UNAUTHORIZED', retryable: false };

@@ -46,8 +46,9 @@ function harness(options = {}) {
       if (sql.startsWith('insert into manual_push_requests')) {
         const row = {
           id: '33333333-3333-4333-8333-333333333333', workspace_id: args[0], oa_integration_id: args[1],
-          requested_by: args[2], recipient_key: args[3], message_text: args[4], mode: args[5],
-          status: 'PREVIEW', line_retry_key: args[6], recipient_display_name: args[7],
+          requested_by: args[2], recipient_key: args[3], message_text: args[4], message_type: args[5],
+          flex_json: args[6] ? JSON.parse(args[6]) : null, mode: args[7],
+          status: 'PREVIEW', line_retry_key: args[8], recipient_display_name: args[9],
           expires_at: new Date(Date.now() + 10 * 60_000).toISOString()
         };
         state.rows.set(row.id, row);
@@ -77,7 +78,7 @@ function harness(options = {}) {
         return {
           rowCount: state.rows.size,
           rows: [...state.rows.values()].map((row) => ({
-            id: row.id, recipient_key: row.recipient_key, message_text: row.message_text, mode: row.mode,
+            id: row.id, recipient_key: row.recipient_key, message_text: row.message_text, message_type: row.message_type, mode: row.mode,
             status: row.status, provider_status: row.provider_status ?? null, provider_request_id: row.provider_request_id ?? null,
             provider_message_id: row.provider_message_id ?? null, recipient_display_name: row.recipient_display_name,
             last_error: row.last_error ?? null, oa_integration_id: row.oa_integration_id,
@@ -240,14 +241,82 @@ test('live mode requires the release gate and a reachable recipient', async () =
   assert.equal(missingToken.json().code, 'CREDENTIAL_REFERENCE_MISSING');
 });
 
-test('runtime mode change after a preview blocks the send', async () => {
+test('a DRY_RUN preview stays on the mock transport even after the host flips to LIVE', async () => {
   const { app, state } = harness();
   const previewId = (await preview(app)).json().previewId;
   Object.assign(state.env, liveEnv());
-  const stale = await send(app, { previewId, confirm: 'SEND' });
-  assert.equal(stale.statusCode, 409);
-  assert.equal(stale.json().code, 'PREVIEW_BLOCKED');
+  const sent = await send(app, { previewId, confirm: 'SEND' });
+  assert.equal(sent.statusCode, 200);
+  assert.equal(sent.json().mode, 'DRY_RUN');
+  assert.equal(sent.json().outbound, false);
+  assert.equal(state.rows.get(previewId).status, 'SENT');
+});
+
+test('a LIVE preview is blocked when the release gate turns off before the send', async () => {
+  const { app, state } = harness({ env: liveEnv() });
+  const previewId = (await preview(app)).json().previewId;
+  state.env.LINE_LIVE_ENABLED = 'false';
+  const blocked = await send(app, { previewId, confirm: 'SEND' });
+  assert.equal(blocked.statusCode, 409);
+  assert.equal(blocked.json().code, 'LIVE_GATE_OFF');
   assert.equal(state.rows.get(previewId).status, 'BLOCKED');
+});
+
+test('a preview can force a mock dry-run while the host is LIVE', async () => {
+  const { app, state } = harness({ env: liveEnv() });
+  const forced = await preview(app, { ...previewPayload, mode: 'DRY_RUN' });
+  assert.equal(forced.statusCode, 201);
+  assert.equal(forced.json().mode, 'DRY_RUN');
+  assert.equal(state.rows.get(forced.json().previewId).mode, 'DRY_RUN');
+});
+
+const flexCard = {
+  type: 'flex', altText: 'โปรโมชั่นพิเศษสำหรับคุณ',
+  contents: { type: 'bubble', header: { type: 'box', contents: [{ type: 'text', text: 'ลด 20% วันนี้เท่านั้น' }] }, body: { type: 'box', contents: [{ type: 'text', text: 'ใส่โค้ด CCC20' }] } }
+};
+const flexPreview = { oaId: OA_ID, recipient: RECIPIENT, flex: flexCard };
+
+test('a flex preview stores the card as the operator saw it and sends from storage', async () => {
+  const { app, state } = harness();
+  const response = await preview(app, flexPreview);
+  assert.equal(response.statusCode, 201, response.body);
+  const data = response.json();
+  assert.equal(data.messageType, 'flex');
+  assert.equal(data.text, flexCard.altText, 'the altText is what the preview bubble and history show');
+  assert.deepEqual(data.flex, flexCard);
+
+  const insert = state.queries.find((item) => item.sql.startsWith('insert into manual_push_requests'));
+  assert.equal(insert.args[5], 'flex');
+  assert.deepEqual(JSON.parse(insert.args[6]), flexCard);
+  assert.equal(insert.args[4], flexCard.altText, 'a flex push still records a non-empty message_text');
+
+  const sent = await send(app, { previewId: data.previewId, confirm: 'SEND' });
+  assert.equal(sent.statusCode, 200, sent.body);
+  assert.equal(sent.json().status, 'SENT');
+  assert.equal(state.slotCount, false, 'a DRY_RUN flex send must not consume the live quota');
+
+  const history = await app.inject({ method: 'GET', url: '/api/messages/push/history' });
+  assert.equal(history.json().pushes[0].messageType, 'flex');
+});
+
+test('a flex preview rejects cards LINE would refuse and mixed text+flex bodies', async () => {
+  const { app, state } = harness();
+  const cases = [
+    { label: 'both kinds', body: { ...flexPreview, text: 'ข้อความอื่น' } },
+    { label: 'no altText', body: { oaId: OA_ID, recipient: RECIPIENT, flex: { type: 'flex', contents: { type: 'bubble' } } } },
+    { label: 'empty altText', body: { oaId: OA_ID, recipient: RECIPIENT, flex: { type: 'flex', altText: '   ', contents: { type: 'bubble' } } } },
+    { label: 'not a flex document', body: { oaId: OA_ID, recipient: RECIPIENT, flex: { type: 'text', text: 'สวัสดี' } } },
+    { label: 'unknown contents', body: { oaId: OA_ID, recipient: RECIPIENT, flex: { type: 'flex', altText: 'x', contents: { type: 'image' } } } },
+    { label: 'oversized document', body: { oaId: OA_ID, recipient: RECIPIENT, flex: { ...flexCard, contents: { type: 'bubble', body: { type: 'box', contents: Array.from({ length: 600 }, (_, index) => ({ type: 'text', text: `แถวที่ ${index} `.padEnd(80, 'ก') })) } } } } },
+    { label: 'bad recipient', body: { oaId: OA_ID, recipient: 'U' + 'z'.repeat(32), flex: flexCard } }
+  ];
+  for (const item of cases) {
+    const refused = await preview(app, item.body);
+    assert.equal(refused.statusCode, 400, item.label);
+    assert.equal(refused.json().code, 'MESSAGE_INVALID', item.label);
+  }
+  assert.equal((await preview(app, { oaId: OA_ID, recipient: RECIPIENT })).statusCode, 400, 'a body with neither kind is refused');
+  assert.equal(state.rows.size, 0, 'no rejected request is stored');
 });
 
 test('history lists workspace pushes without credentials', async () => {
