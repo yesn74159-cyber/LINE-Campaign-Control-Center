@@ -9,7 +9,7 @@ const staticRoot = path.resolve('dist/admin');
 const html = readFileSync(path.join(staticRoot, 'index.html'));
 const RECIPIENT = 'U' + 'a'.repeat(32);
 const PREVIEW_ID = '33333333-3333-4333-8333-333333333333';
-const FLEX_CARD = { type: 'flex', altText: 'โปรโมชั่นส่งต่อถึงเพื่อน', contents: { type: 'bubble', body: { type: 'box', contents: [{ type: 'text', text: 'ลด 20% วันนี้' }, { type: 'button', action: { type: 'uri', uri: 'https://example.test' }, style: 'primary', label: 'กดรับสิทธิ์' }] } } };
+const FLEX_CARD = { type: 'flex', altText: 'โปรโมชั่นส่งต่อถึงเพื่อน', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ลด 20% วันนี้' }, { type: 'button', style: 'primary', action: { type: 'uri', label: 'กดรับสิทธิ์', uri: 'https://example.test' } }] } } };
 
 function responseJson(res, body, status = 200) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -20,18 +20,22 @@ function responseJson(res, body, status = 200) {
  * A static Admin bundle served against an in-memory API, so the browser test sees the
  * real screens while every guard (CSRF, consent, mode) stays on the server side.
  */
-function harness({ liveSendEnabled = false } = {}) {
+function harness({ liveSendEnabled = false, signedIn = true } = {}) {
   const requests = [];
   const bodies = { preview: null, send: null, job: null };
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
-    if (pathname.startsWith('/api/')) {
+    if (pathname.startsWith('/api/') || pathname === '/health') {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
       req.on('end', () => {
         requests.push({ method: req.method, path: pathname, csrf: req.headers['x-csrf-token'], body: raw });
-        if (pathname === '/api/auth/me') return responseJson(res, { user: { id: 'owner-a', displayName: 'Test Owner', role: 'owner', email: 'owner@example.test' } });
+        if (pathname === '/health') return responseJson(res, { ok: true, mode: liveSendEnabled ? 'LIVE' : 'DRY_RUN', liveSendEnabled, persistence: 'postgres' });
+        if (pathname === '/api/auth/me') {
+          if (!signedIn) return responseJson(res, { error: 'session expired' }, 401);
+          return responseJson(res, { user: { id: 'owner-a', displayName: 'Test Owner', role: 'owner', email: 'owner@example.test' } });
+        }
         if (pathname === '/api/dashboard') return responseJson(res, { mode: liveSendEnabled ? 'LIVE' : 'DRY_RUN', persistence: 'postgres', appMode: liveSendEnabled ? 'LIVE' : 'DRY_RUN', liveSendEnabled, counts: {}, nextJob: null });
         if (pathname === '/api/scheduler/jobs' && req.method === 'POST') { bodies.job = JSON.parse(raw); return responseJson(res, { job: { id: 'job-1', ...bodies.job } }, 201); }
         if (pathname === '/api/scheduler/jobs') return responseJson(res, { jobs: bodies.job ? [{ id: 'job-1', campaignId: bodies.job.campaignId, oaId: bodies.job.oaId, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), timeZone: 'Asia/Bangkok', mode: bodies.job.mode || 'DRY_RUN', status: 'SCHEDULED', attempts: 0, idempotencyKey: 'k-1' }] : [] });
@@ -69,7 +73,7 @@ function harness({ liveSendEnabled = false } = {}) {
     const mime = !file ? 'text/html' : target.endsWith('.js') ? 'text/javascript' : target.endsWith('.css') ? 'text/css' : 'application/octet-stream';
     res.writeHead(200, { 'content-type': mime }); res.end(data);
   });
-  return { server, requests, bodies };
+  return { server, requests, bodies, signedIn };
 }
 
 /** Serves the harness and opens a logged-in Admin page in a fresh browser context. */
@@ -84,11 +88,21 @@ async function openApp(t, fixture) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('http://127.0.0.1:' + fixture.server.address().port, { waitUntil: 'networkidle' });
-  for (const group of ['ทำงานประจำวัน', 'ออกแบบข้อความ', 'ตั้งค่าระบบ']) await page.getByText(group).waitFor({ timeout: 10_000 });
+  if (fixture.signedIn !== false) {
+    for (const group of ['ทำงานประจำวัน', 'ออกแบบข้อความ', 'ตั้งค่าระบบ']) await page.getByText(group).waitFor({ timeout: 10_000 });
+  }
   return { page, errors };
 }
 
 const navTo = (page, icon, label) => page.getByRole('button', { name: `${icon} ${label}`, exact: true }).click();
+
+/** The first piece of copy inside a Flex document, used to prove the preview really rendered the card. */
+function firstFlexText(node) {
+  if (Array.isArray(node)) return node.map(firstFlexText).find(Boolean) || '';
+  if (!node || typeof node !== 'object') return '';
+  if (typeof node.text === 'string' && node.text.trim()) return node.text.trim();
+  return Object.values(node).map(firstFlexText).find(Boolean) || '';
+}
 
 test('manual push page previews first and sends only after typing SEND', async (t) => {
   const fixture = harness();
@@ -166,6 +180,11 @@ test('Flex Studio hands its card to the push screen instead of a share link', as
 
   await navTo(page, '✦', 'สร้างข้อความ (Flex Studio)');
   await page.getByRole('heading', { name: 'สร้างข้อความที่คนอยากเปิด' }).waitFor();
+  const cardCopy = firstFlexText(JSON.parse(await page.locator('.editor-panel textarea').inputValue()));
+  assert.ok(cardCopy, 'the seeded card has some copy to render');
+  await page.locator('.flex-render').filter({ hasText: cardCopy }).waitFor({ timeout: 5_000 });
+  assert.ok((await page.locator('.flex-render').innerText()).includes(cardCopy), 'the studio phone shows the real card, not a mock-up');
+  assert.equal(await page.locator('.flex-render-fallback').count(), 0, 'a valid card must not fall back to the placeholder');
   await page.getByRole('button', { name: 'แชร์เข้าแชท' }).click();
 
   await page.getByRole('heading', { name: 'ส่งข้อความตรงถึงลูกค้า 1 คน' }).waitFor();
@@ -213,4 +232,43 @@ test('a live scheduler job needs the release gate, the LIVE choice and a typed c
   assert.ok((await page.locator('.job-row').first().innerText()).includes('ส่งจริง (LIVE)'), 'the job row labels a live send');
   assert.deepEqual(errors, []);
   console.log('SCHEDULER_LIVE_UI_PASS');
+});
+
+test('the login screen reports the release gate it actually got from the server', async (t) => {
+  const dry = await openApp(t, harness({ signedIn: false }));
+  await dry.page.locator('.auth-foot').waitFor();
+  assert.equal(await dry.page.locator('.auth-foot').innerText(), 'โหมดทดสอบ · ยังไม่มีข้อความออกจากเครื่องนี้ · ไม่เก็บ password ใน Frontend');
+  assert.equal(await dry.page.locator('.auth-foot.live').count(), 0);
+
+  const live = await openApp(t, harness({ liveSendEnabled: true, signedIn: false }));
+  await live.page.locator('.auth-foot').waitFor();
+  assert.match(await live.page.locator('.auth-foot').innerText(), /โหมด LIVE · ข้อความที่ยืนยันแล้วจะส่งถึงลูกค้าจริง/);
+  assert.equal(await live.page.locator('.auth-foot.live').count(), 1, 'a live host is warned before they can type a password');
+  console.log('LOGIN_GATE_UI_PASS');
+});
+
+test('a hostile Flex card renders as text, not as markup, in the preview', async (t) => {
+  const hostile = {
+    type: 'flex', altText: '<img src=x onerror="window.__pwned=1">',
+    contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [
+      { type: 'text', text: '<img src=x onerror="window.__pwned=1">' },
+      { type: 'button', action: { type: 'uri', label: "A'\">alert", uri: 'javascript:window.__pwned=1' } }
+    ] } }
+  };
+  const fixture = harness();
+  const { page, errors } = await openApp(t, fixture);
+
+  await navTo(page, '✉', 'ส่งข้อความตรง');
+  await page.locator('label.choice').filter({ hasText: 'การ์ดสวย (Flex)' }).click();
+  await page.locator('#push-flex-json').fill(JSON.stringify(hostile, null, 2));
+  await page.getByRole('button', { name: 'ดูตัวอย่างก่อน (Preview)' }).click();
+  await page.locator('.push-flex-preview').waitFor({ timeout: 10_000 });
+
+  const shown = await page.locator('.push-flex-preview').innerText();
+  assert.ok(shown.includes('<img src=x onerror="window.__pwned=1">'), 'the markup is displayed literally');
+  assert.equal(await page.locator('.push-flex-preview img').count(), 0, 'no image element was created from the card text');
+  assert.equal(await page.locator('a[href^="javascript:"]').count(), 0, 'a javascript: uri never reaches an href');
+  assert.equal(await page.evaluate(() => window.__pwned), undefined, 'nothing in the card executed on this origin');
+  assert.deepEqual(errors, []);
+  console.log('FLEX_PREVIEW_SANITISED_PASS');
 });

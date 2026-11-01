@@ -52,7 +52,7 @@ test('Workspace page renders, loads members, and updates workspace via API', asy
   const port = server.address().port;
   let browser;
   try {
-    browser = await chromium.launch({ headless:true, executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe' });
+    browser = await chromium.launch({ headless:true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width:1280, height:720 } });
     await context.addCookies([{ name:'ccc_csrf',value:'qa-token',domain:'127.0.0.1',path:'/' }]);
     const page = await context.newPage();

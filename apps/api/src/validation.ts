@@ -30,12 +30,54 @@ export function assertScheduledAt(value: unknown, status: 'DRAFT' | 'SCHEDULED')
   return parsed.toISOString();
 }
 
+const VIDEO_BUBBLE_SIZES = new Set(['kilo', 'mega', 'giga']);
+
+type VideoSite = { node: Record<string, unknown>; key: string | null; parent: Record<string, unknown> | null };
+
+function collectVideoSites(value: unknown, key: string | null, parent: Record<string, unknown> | null, out: VideoSite[]) {
+  if (Array.isArray(value)) { for (const item of value) collectVideoSites(item, key, parent, out); return; }
+  if (!value || typeof value !== 'object') return;
+  const node = value as Record<string, unknown>;
+  if (node.type === 'video') out.push({ node, key, parent });
+  for (const [childKey, child] of Object.entries(node)) if (childKey !== 'type') collectVideoSites(child, childKey, node, out);
+}
+
+const BOX_LAYOUTS = new Set(['horizontal', 'vertical', 'baseline']);
+
+/** LINE rejects a box without a layout, so an operator finds out here instead of at send time. */
+function assertBoxLayouts(value: unknown, path = 'contents') {
+  if (Array.isArray(value)) { value.forEach((item, index) => assertBoxLayouts(item, `${path}[${index}]`)); return; }
+  if (!value || typeof value !== 'object') return;
+  const node = value as Record<string, unknown>;
+  if (node.type === 'box' && !BOX_LAYOUTS.has(String(node.layout))) throw new Error(`${path} is a box without a valid layout (horizontal, vertical or baseline)`);
+  for (const [key, child] of Object.entries(node)) if (key !== 'type') assertBoxLayouts(child, `${path}.${key}`);
+}
+
+/** LINE plays a video only as the hero of one large bubble; anywhere else the card fails to render. */
+function assertFlexVideoRules(flex: Record<string, unknown>) {
+  assertBoxLayouts(flex.contents);
+  const contents = flex.contents as Record<string, unknown>;
+  const sites: VideoSite[] = [];
+  collectVideoSites(contents, null, null, sites);
+  if (sites.length === 0) return;
+  if (contents.type === 'carousel') throw new Error('LINE cannot play a video inside a carousel; use a single bubble');
+  for (const site of sites) {
+    if (site.key !== 'hero' || site.parent?.type !== 'bubble') throw new Error('a video is only allowed as the hero of a bubble');
+    if (typeof site.node.url !== 'string' || !site.node.url.startsWith('https://')) throw new Error('a video needs an https url');
+    if (site.node.previewUrl !== undefined && !(typeof site.node.previewUrl === 'string' && site.node.previewUrl.startsWith('https://'))) throw new Error('video previewUrl must be an https URL');
+    if (!site.node.altContent || typeof site.node.altContent !== 'object') throw new Error('a video needs altContent, the image LINE shows when it cannot play');
+  }
+  const size = String(contents.size || 'mega');
+  if (!VIDEO_BUBBLE_SIZES.has(size)) throw new Error(`a bubble with a video needs size kilo, mega or giga (got ${size})`);
+}
+
 export function assertFlexJson(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('flexJson must be an object');
   const flex = value as Record<string, unknown>;
   const contents = flex.contents as Record<string, unknown> | undefined;
   if (flex.type !== 'flex' || typeof flex.altText !== 'string' || !contents || !['bubble', 'carousel'].includes(String(contents.type))) throw new Error('invalid LINE Flex document');
   if (String(flex.altText).length > 400 || JSON.stringify(value).length > 45000) throw new Error('Flex document exceeds LINE safety limits');
+  assertFlexVideoRules(flex);
   return flex;
 }
 

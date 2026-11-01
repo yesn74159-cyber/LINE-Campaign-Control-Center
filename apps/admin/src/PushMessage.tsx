@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiUrl } from './apiClient.js';
+import FlexPreview from './FlexPreview.js';
 
 type OaOption = { id: string; displayName: string; basicId: string; enabled: boolean; environment: string; killSwitch: boolean };
 type CustomerOption = { lineUserKey: string; providerId: string; displayName?: string; optIn: boolean; blockedAt?: string };
@@ -188,7 +189,7 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
       <div className="panel-head"><div><p className="eyebrow purple-text">ขั้นที่ 3 · ยังไม่ได้ส่ง</p><h3>ตรวจข้อความก่อนยืนยัน</h3></div>
         <span className={`tag ${preview.mode === 'LIVE' ? 'success' : 'dry'}`}>{preview.mode === 'LIVE' ? 'ส่งเข้า LINE จริง' : 'DRY RUN · ไม่ยิง LINE'}</span></div>
       <div className="push-bubble"><strong>{preview.oaDisplayName}</strong>{preview.messageType === 'flex'
-        ? <div className="push-flex-preview"><ul>{collectFlexTexts(preview.flex ?? {}).slice(0, 12).map((line, index) => <li key={index}>{line}</li>)}</ul><small>การ์ด Flex · altText: {preview.text}</small></div>
+        ? <div className="push-flex-preview"><FlexPreview card={preview.flex ?? null} fallback="การ์ดนี้แสดงผลไม่ได้ · กลับไปตรวจ JSON ใน Flex Studio" /><small>การ์ด Flex · altText (สิ่งที่ขึ้นในแจ้งเตือน): {preview.text}</small></div>
         : <p>{preview.text}</p>}</div>
       <p className="push-meta">ผู้รับ: {preview.recipient}{preview.recipientName ? ` (${preview.recipientName})` : ''} · {preview.messageType === 'flex' ? 'การ์ด Flex' : 'ข้อความ'} · อยู่ได้อีก {minutesLeft} นาที</p>
       {preview.mode === 'LIVE' && <p className="push-meta">LINE ยืนยันว่าผู้รับรายนี้ยังเปิดรับข้อความ (ตรวจจากโปรไฟล์ก่อนส่ง)</p>}

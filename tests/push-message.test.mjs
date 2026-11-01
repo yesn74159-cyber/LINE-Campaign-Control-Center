@@ -272,7 +272,7 @@ test('a preview can force a mock dry-run while the host is LIVE', async () => {
 
 const flexCard = {
   type: 'flex', altText: 'โปรโมชั่นพิเศษสำหรับคุณ',
-  contents: { type: 'bubble', header: { type: 'box', contents: [{ type: 'text', text: 'ลด 20% วันนี้เท่านั้น' }] }, body: { type: 'box', contents: [{ type: 'text', text: 'ใส่โค้ด CCC20' }] } }
+  contents: { type: 'bubble', header: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ลด 20% วันนี้เท่านั้น' }] }, body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ใส่โค้ด CCC20' }] } }
 };
 const flexPreview = { oaId: OA_ID, recipient: RECIPIENT, flex: flexCard };
 

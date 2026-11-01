@@ -23,6 +23,25 @@ test('rejects missing or fabricated recipients, broadcast and invalid Flex', () 
   assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: { ...FLEX, altText: 'a'.repeat(401) } }), /safety limits/);
 });
 
+test('a box without a layout is refused before it can reach LINE', () => {
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: { type: 'flex', altText: 'x', contents: { type: 'bubble', body: { type: 'box', contents: [] } } } }), /without a valid layout/);
+  assert.doesNotThrow(() => buildLivePushBody({ lineUserId: USER, flexMessage: { type: 'flex', altText: 'x', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [] } } } }));
+});
+
+const VIDEO_HERO = { type: 'video', url: 'https://example.com/clip.mp4', previewUrl: 'https://example.com/clip.jpg', altContent: { type: 'image', url: 'https://example.com/clip.jpg' } };
+const videoCard = (hero = VIDEO_HERO, size = 'giga') => ({ type: 'flex', altText: 'คลิปโปรโมชั่น', contents: { type: 'bubble', hero, body: { type: 'box', layout: 'vertical', contents: [] }, ...(size ? { size } : {}) } });
+
+test('a video is accepted only where LINE can actually play it', () => {
+  assert.equal(buildLivePushBody({ lineUserId: USER, flexMessage: videoCard() }).messages[0].contents.size, 'giga');
+  assert.equal(buildLivePushBody({ lineUserId: USER, flexMessage: videoCard(VIDEO_HERO, null) }).messages[0].contents.type, 'bubble', 'size defaults to mega, which is allowed');
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: videoCard(VIDEO_HERO, 'micro') }), /kilo, mega or giga/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: { type: 'flex', altText: 'x', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [VIDEO_HERO] } } } }), /hero of a bubble/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: { type: 'flex', altText: 'x', contents: { type: 'carousel', contents: [videoCard().contents] } } }), /carousel/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: videoCard({ ...VIDEO_HERO, url: 'http://example.com/clip.mp4' }) }), /https url/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: videoCard({ ...VIDEO_HERO, previewUrl: 'javascript:alert(1)' }) }), /previewUrl/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: videoCard({ type: 'video', url: 'https://example.com/clip.mp4' }) }), /altContent/);
+});
+
 test('live gate refuses DRY_RUN and absent authorization', () => {
   assert.throws(() => assertExplicitLiveDelivery('DRY_RUN', true), /explicit LIVE/);
   assert.throws(() => assertExplicitLiveDelivery('LIVE', false), /explicit LIVE/);

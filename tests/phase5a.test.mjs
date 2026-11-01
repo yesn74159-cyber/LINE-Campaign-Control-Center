@@ -46,6 +46,12 @@ test('baseline security headers are applied to API responses', async () => {
   assert.ok(response.headers['x-request-id']);
 });
 
+test('the public health reply tells the login screen which gate is open', async () => {
+  const health = (await app.inject({ method: 'GET', url: '/health' })).json();
+  assert.equal(health.mode, 'DRY_RUN');
+  assert.equal(health.liveSendEnabled, false, 'a host without the release gate must not advertise live sending');
+});
+
 test('cross-origin mutations are rejected while the configured origin is accepted', async () => {
   const blocked = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'content-type': 'application/json', origin: 'https://evil.example' }, payload: JSON.stringify({ email: 'admin@memory.local', password: originalPassword }) });
   assert.equal(blocked.statusCode, 403);

@@ -96,7 +96,7 @@ export function buildApp(injectedRepository?: Repository) {
     registerReferralRoutes(app, pool, authenticate, requireCsrf);
     registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }
-  app.get('/health', async () => ({ ok: true, mode: process.env.APP_MODE || 'DRY_RUN', persistence: repo.kind }));
+  app.get('/health', async () => ({ ok: true, mode: (process.env.APP_MODE || 'DRY_RUN').toUpperCase(), liveSendEnabled: isLiveSendEnabled(), persistence: repo.kind }));
   const opsPool = selected.database?.pool;
   if (repo.kind === 'postgres' && opsPool) {
     app.get('/api/ops/delivery-health', { preHandler: authorize('read') }, async (request) => readDeliveryHealth(opsPool, { workspaceId: (request as RequestWithUser).user!.workspaceId }));

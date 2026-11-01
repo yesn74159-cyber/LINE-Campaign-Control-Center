@@ -219,8 +219,8 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
         <label htmlFor="oa-login-id">LINE Login Channel ID (ยังไม่เปิด OAuth)</label>
         <input id="oa-login-id" value={login} onChange={e => setLogin(e.target.value)}
           inputMode="numeric" pattern="[0-9]{5,30}" placeholder="1234567890" disabled={!isOwner || saving}/>
-        <label htmlFor="oa-provider-id">LINE Provider ID</label>
-        <input id="oa-provider-id" value={provider} onChange={e => setProvider(e.target.value)}
+        <label htmlFor="oa-channel-provider-id">LINE Provider ID</label>
+        <input id="oa-channel-provider-id" value={provider} onChange={e => setProvider(e.target.value)}
           pattern="[A-Za-z0-9_-]+" placeholder="provider-id" maxLength={120} disabled={!isOwner || saving}/>
         <button className="primary" disabled={!isOwner || saving || !selected || !messaging || !provider}>
           บันทึกข้อมูล Channel (ยังไม่เชื่อมจริง)
