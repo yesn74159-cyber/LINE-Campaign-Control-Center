@@ -81,6 +81,36 @@ export async function checkLineBotToken(token: string, transport: FetchFn = fetc
   return { basicId: data.basicId, displayName: data.displayName };
 }
 
+export type LineProfileResult = { reachable: boolean; displayName?: string };
+
+/**
+ * Fixed read-only profile lookup used before a manual live push. LINE returns
+ * 404 for a user who blocked the OA or was never a friend, which is ambiguous
+ * but is the only pre-send signal available; any other failure is surfaced so
+ * the caller can refuse to send rather than guess.
+ */
+export async function checkLineProfile(token: string, userId: string, transport: FetchFn = fetch): Promise<LineProfileResult> {
+  if (!token || token.length > 4096 || /[\r\n]/.test(token)) throw new Error('invalid access token');
+  if (!/^U[0-9a-f]{32}$/i.test(userId)) throw new Error('invalid LINE userId');
+  let response: Response;
+  try {
+    response = await transport(`https://api.line.me/v2/bot/profile/${userId}`, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000), redirect: 'error', cache: 'no-store'
+    });
+  } catch {
+    throw new Error('LINE API unreachable');
+  }
+  if (response.status === 404) return { reachable: false };
+  if (response.status === 401 || response.status === 403) throw new Error('LINE rejected the channel access token');
+  if (!response.ok) throw new Error('LINE profile check failed');
+  const body: unknown = await response.json().catch(() => null);
+  if (!body || typeof body !== 'object') throw new Error('invalid LINE profile response');
+  const name = (body as { displayName?: unknown }).displayName;
+  if (typeof name !== 'string' || name.length < 1 || name.length > 160) throw new Error('invalid LINE profile response');
+  return { reachable: true, displayName: name };
+}
+
 export function registerOaConnectRoutes(
   app: FastifyInstance, pool: Pool | null,
   requireUser: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,

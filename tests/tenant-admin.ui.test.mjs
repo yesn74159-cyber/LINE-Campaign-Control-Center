@@ -59,7 +59,7 @@ test('Workspace page renders, loads members, and updates workspace via API', asy
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:' + port, { waitUntil:'networkidle' });
-    await page.getByRole('button', { name:'Workspace' }).click();
+    await page.getByRole('button', { name:'ทีมงาน & การเชื่อมต่อ (Workspace)' }).click();
     await page.getByRole('heading', { name:'Workspace & LINE OA Settings' }).waitFor({ timeout:10000 });
     await page.getByRole('cell', { name:'owner@example.test' }).waitFor();
     assert.equal(await page.locator('#workspace-name').inputValue(), 'Existing Tenant');

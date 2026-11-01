@@ -42,7 +42,7 @@ export class ProviderTransportError extends Error {
   }
 }
 
-export type MessagingResult = { dryRun: boolean; outbound: boolean; idempotencyKey: string; providerStatus?: number; providerRequestId?: string };
+export type MessagingResult = { dryRun: boolean; outbound: boolean; idempotencyKey: string; providerStatus?: number; providerRequestId?: string; providerMessageId?: string };
 export type CredentialResolver = (input: { oaId: string; workspaceId: string }) => Promise<Buffer | null>;
 export type AdapterSendInput = { job: SchedulerJob; policy?: PolicySnapshot; delivery?: OutboxDelivery; payload?: DeliveryPayload };
 
@@ -63,6 +63,12 @@ function assertProviderResponse(response: TransportResponse) {
   const classification = classifyProviderError(response.status);
   const uncertain = response.status >= 500 || response.status === 429;
   throw new ProviderTransportError(response.status, classification.retryable, uncertain, classification.code, response.requestId, response.retryAfterMs || classification.retryAfterMs);
+}
+
+function sentMessageId(body: unknown): string | undefined {
+  const sent = (body as { sentMessages?: Array<{ id?: unknown }> } | undefined)?.sentMessages;
+  const id = Array.isArray(sent) ? sent[0]?.id : undefined;
+  return typeof id === 'string' && id.length <= 200 ? id : undefined;
 }
 
 export class MockLineMessagingAdapter implements MessagingAdapter {
@@ -109,7 +115,8 @@ export class LiveLineMessagingAdapter implements MessagingAdapter {
     try {
       const response = await this.transport.send({ endpoint: this.endpoint, token, retryKey, body: { to: payload.to, messages: payload.messages } });
       assertProviderResponse(response);
-      return { dryRun: false, outbound: true, idempotencyKey: retryKey, providerStatus: response.status, providerRequestId: response.requestId };
+      const providerMessageId = sentMessageId(response.body);
+      return { dryRun: false, outbound: true, idempotencyKey: retryKey, providerStatus: response.status, providerRequestId: response.requestId, ...(providerMessageId ? { providerMessageId } : {}) };
     } finally {
       tokenBuffer.fill(0);
     }

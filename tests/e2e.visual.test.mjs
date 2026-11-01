@@ -73,13 +73,13 @@ test('Local Mock referral path at 360x800 records Click and renders portal plus 
   const page = await browser.newPage({ viewport: { width: 360, height: 800 }, deviceScaleFactor: 1 });
   try {
     await login(page);
-    await page.getByRole('button', { name: 'Workspace' }).click();
+    await page.getByRole('button', { name: 'ทีมงาน & การเชื่อมต่อ (Workspace)' }).click();
     await page.locator('#member-name').fill('E2E Staff');
     await page.locator('#member-email').fill(`e2e-${Date.now()}@mock.local`);
     await page.locator('#member-role').selectOption('editor');
     await page.getByRole('button', { name: 'เชิญสมาชิก' }).click();
     await page.getByText('เชิญสมาชิกแล้ว', { exact: false }).waitFor();
-    await page.getByRole('button', { name: 'Referral Dashboard' }).click();
+    await page.getByRole('button', { name: 'ลิงก์แนะนำ (Referral)' }).click();
     await page.getByRole('heading', { name: 'Referral Dashboard', level: 2 }).waitFor();
     const staffOption = await page.locator('#referral-staff option').nth(1).getAttribute('value');
     assert.ok(staffOption);

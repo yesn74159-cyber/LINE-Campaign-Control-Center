@@ -11,6 +11,7 @@ import { assertControlReason, assertEmail, assertFlexJson, assertOaMetadata, ass
 import type { AdminUser } from './types.js';
 import { registerTenantAdminRoutes } from './tenantAdmin.js';
 import { registerOaConnectRoutes } from './lineOaConnect.js';
+import { registerPushMessageRoutes } from './pushMessage.js';
 import { CampaignMockStore } from './campaignMock.js';
 import { registerCampaignMockRoutes } from './campaignRoutes.js';
 import { createLineLoginConfig, registerLineLoginRoutes } from './lineLogin.js';
@@ -90,6 +91,7 @@ export function buildApp(injectedRepository?: Repository) {
     if (!pool) throw new Error('PostgreSQL persistence is required for LINE Login routes');
     registerTenantAdminRoutes(app, pool, authenticate, requireCsrf);
     registerOaConnectRoutes(app, pool, authenticate, requireCsrf);
+    registerPushMessageRoutes(app, pool, repo, authenticate, requireCsrf);
     registerReferralRoutes(app, pool, authenticate, requireCsrf);
     registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }

@@ -50,6 +50,7 @@ jobs:
           tests/line-login.test.mjs
           tests/oa-live-connect.test.mjs
           tests/live-push-payload.test.mjs
+          tests/push-message.test.mjs
       - name: Tenant suites without a database
         run: >-
           node --test

@@ -59,6 +59,29 @@ export function buildLivePushBody(input: LivePushBodyInput): LivePushBody {
   return { to: userId, messages: [structuredClone(flex)] };
 }
 
+/** LINE caps a single text message at 5000 characters. */
+export const MANUAL_PUSH_TEXT_MAX_CHARS = 5000;
+
+export type ManualTextPushBody = { to: string; messages: Array<{ type: 'text'; text: string }> };
+
+/**
+ * Single-recipient text push used by the manual "ส่งข้อความตรง" screen.
+ * Consent, kill switches and the LIVE release gate are enforced by the route,
+ * exactly like the campaign pipeline. No network operations occur here.
+ */
+export function buildManualTextPushBody(input: { lineUserId: unknown; text: unknown }): ManualTextPushBody {
+  const userId = input.lineUserId;
+  if (typeof userId !== 'string' || !/^U[0-9a-f]{32}$/i.test(userId)) {
+    throw new Error('recipient must be a LINE userId (U followed by 32 hex characters)');
+  }
+  const text = typeof input.text === 'string' ? input.text.trim() : '';
+  if (!text) throw new Error('message text must not be empty');
+  if ([...text].length > MANUAL_PUSH_TEXT_MAX_CHARS) {
+    throw new Error(`message text must not exceed ${MANUAL_PUSH_TEXT_MAX_CHARS} characters`);
+  }
+  return { to: userId, messages: [{ type: 'text', text }] };
+}
+
 /**
  * Used by a future live scheduler to forbid accidental dry-run/live
  * crossovers, rather than using a default mode.

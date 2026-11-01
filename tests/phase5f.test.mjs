@@ -221,7 +221,7 @@ test('CLI exposes vault rotation and alert notification with explicit opt-in', (
 
 test('RLS and grant rollout stays a guarded proposal outside migrations', () => {
   const migrationFiles = fs.readdirSync(path.join(root, 'db', 'migrations'));
-  assert.equal(migrationFiles.some((file) => file.startsWith('013_')), false, 'proposal must not be an auto-applied migration');
+  assert.equal(migrationFiles.some((file) => /rls_grant|fk_supporting_indexes/.test(file)), false, 'proposal must not be an auto-applied migration');
 
   const rls = read('db/proposals/013_rls_grant_tier_ab.sql');
   const rlsCode = rls.replace(/--.*$/gm, '');
