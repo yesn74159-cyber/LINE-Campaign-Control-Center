@@ -76,14 +76,16 @@ test('Flex Studio turns the card into a LIFF link the operator opens on the phon
   await page.getByRole('button', { name: '✦ สร้างข้อความ (Flex Studio)', exact: true }).click();
   await page.getByRole('button', { name: 'แชร์จากมือถือ (LIFF)' }).click();
 
-  const link = await page.locator('.share-link-row input').inputValue();
-  assert.ok(link.startsWith(`https://liff.line.me/${LIFF_ID}?c=`), 'the link is the LIFF URL, not the endpoint URL');
-  // The shipped template is written with {{...}} slots, so the panel has to say so before LINE does.
+  // The stub hands back the raw {{...}} template, so the panel must refuse to offer a link
+  // that the server validator and LINE would both reject, instead of sending the operator to the phone.
   assert.match(await page.locator('.share-panel').innerText(), /ตัวยึดที่ยังไม่แทนค่า/);
+  assert.equal(await page.locator('.share-link-row').count(), 0, 'no link is offered while the card still holds placeholders');
 
   await page.locator('.editor-panel textarea').fill(JSON.stringify(CARD));
   assert.equal(await page.locator('.share-panel .auth-error').count(), 0, 'a clean card no longer trips the placeholder warning');
-  assert.deepEqual(fromBase64Url(new URL(await page.locator('.share-link-row input').inputValue()).searchParams.get('c')), CARD, 'the link carries the edited card');
+  const link = await page.locator('.share-link-row input').inputValue();
+  assert.ok(link.startsWith(`https://liff.line.me/${LIFF_ID}?c=`), 'the link is the LIFF URL, not the endpoint URL');
+  assert.deepEqual(fromBase64Url(new URL(link).searchParams.get('c')), CARD, 'the link carries the edited card');
   assert.deepEqual(errors, []);
 });
 

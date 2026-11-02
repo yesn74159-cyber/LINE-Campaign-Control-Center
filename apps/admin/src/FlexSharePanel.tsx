@@ -18,13 +18,19 @@ export default function FlexSharePanel({ card, liffId }: { card: FlexCard; liffI
   };
   return <section className="panel share-panel">
     <div className="panel-head"><div><p className="eyebrow green">SHARE FROM YOUR PHONE · LIFF</p><h3>ส่งการ์ดในชื่อคุณ ให้เพื่อนหลายคนพร้อมกัน</h3></div><span className="tag dry">ไม่ผ่าน LINE OA</span></div>
-    {leftovers.length > 0 && <p className="auth-error">การ์ดมีตัวยึดที่ยังไม่แทนค่า: {leftovers.join(', ')} · แก้ก่อนส่ง ไม่งั้น LINE จะตอบ 400</p>}
-    <ol className="share-steps">{STEPS.map((step) => <li key={step}>{step}</li>)}</ol>
-    <div className="share-link-row">
-      <input readOnly value={link} onFocus={(event) => event.currentTarget.select()} aria-label="ลิงก์ LIFF สำหรับแชร์การ์ด" />
-      <button className="secondary" onClick={() => void copy()}>คัดลอก</button>
-    </div>
-    {copied && <p className="form-note">{copied}</p>}
-    <p className="form-note">ต้องใช้ได้ก็ต่อเมื่อ LIFF app ของ channel นี้ชี้ endpoint มาที่ /share บนโดเมนเดียวกัน และ OA ถูก link เป็น bot ของ channel แล้ว</p>
+    {/* A card with unfilled slots is refused by the server validator and by LINE, so handing
+        over a link that cannot send only costs the operator a trip to their phone. */}
+    {leftovers.length > 0 ? <>
+      <p className="auth-error">การ์ดมีตัวยึดที่ยังไม่แทนค่า: {leftovers.join(', ')} · แก้ก่อนส่ง ไม่งั้น LINE จะตอบ 400</p>
+      <p className="form-note">พิมพ์ค่าจริงทับในช่อง Flex Message JSON ให้หมด · พอการ์ดสะอาดแล้วแผงนี้จะแสดงลิงก์ให้คัดลอกเอง</p>
+    </> : <>
+      <ol className="share-steps">{STEPS.map((step) => <li key={step}>{step}</li>)}</ol>
+      <div className="share-link-row">
+        <input readOnly value={link} onFocus={(event) => event.currentTarget.select()} aria-label="ลิงก์ LIFF สำหรับแชร์การ์ด" />
+        <button className="secondary" onClick={() => void copy()}>คัดลอก</button>
+      </div>
+      {copied && <p className="form-note">{copied}</p>}
+      <p className="form-note">ต้องใช้ได้ก็ต่อเมื่อ LIFF app ของ channel นี้ชี้ endpoint มาที่ /share บนโดเมนเดียวกัน และ OA ถูก link เป็น bot ของ channel แล้ว</p>
+    </>}
   </section>;
 }
