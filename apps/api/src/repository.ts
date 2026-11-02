@@ -198,10 +198,13 @@ export function createPostgresRepository(pool: Pool): Repository {
       } finally { client.release(); }
     },
     async getDeliveryContext(deliveryId, workspaceId) {
-      const result = await pool.query('select d.id as delivery_id, d.workspace_id, d.scheduler_job_id, d.oa_integration_id, d.recipient_key, j.campaign_revision_id, r.flex_json from outbox_deliveries d join scheduler_jobs j on j.id=d.scheduler_job_id and j.workspace_id=d.workspace_id join campaign_revisions r on r.id=j.campaign_revision_id where d.id=$1 and d.workspace_id=$2', [deliveryId, workspaceId]);
+      const result = await pool.query('select d.id as delivery_id, d.workspace_id, d.scheduler_job_id, d.oa_integration_id, d.recipient_key, j.campaign_revision_id, r.flex_json, c.slug as campaign_id, c.name, c.title, c.description, c.image, c.cta, c.flex_file from outbox_deliveries d join scheduler_jobs j on j.id=d.scheduler_job_id and j.workspace_id=d.workspace_id join campaign_revisions r on r.id=j.campaign_revision_id join campaigns c on c.id=r.campaign_id where d.id=$1 and d.workspace_id=$2', [deliveryId, workspaceId]);
       const row = result.rows[0];
       if (!row) throw new Error('outbox delivery not found in this workspace');
-      return { jobId: String(row.scheduler_job_id), workspaceId: String(row.workspace_id), oaId: String(row.oa_integration_id), campaignRevisionId: String(row.campaign_revision_id), recipientKey: String(row.recipient_key), flexJson: row.flex_json as Record<string, unknown> };
+      // A revision written before the slots were filled still holds {{TITLE}} in the row; the
+      // worker has to send what the operator saw in Flex Studio, so substitute here as well.
+      const campaign = { id: String(row.campaign_id), name: String(row.name), title: String(row.title), description: String(row.description), image: String(row.image), cta: String(row.cta), flexFile: String(row.flex_file), active: true };
+      return { jobId: String(row.scheduler_job_id), workspaceId: String(row.workspace_id), oaId: String(row.oa_integration_id), campaignRevisionId: String(row.campaign_revision_id), recipientKey: String(row.recipient_key), flexJson: fillFlexTemplate(campaign, row.flex_json as Record<string, unknown>) };
     },
     async reserveDeliverySlot(input) {
       const now = input.now || new Date();
