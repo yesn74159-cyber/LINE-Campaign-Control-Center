@@ -10,14 +10,19 @@
 		max_size 1MB
 	}
 
+	@notshare not path /share /share/*
+
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		-Server
 	}
+	# The LIFF share page is framed by liff.line.me on purpose. This edge used to put
+	# X-Frame-Options on every response, which would have re-blocked it no matter what
+	# nginx answered, so DENY is scoped to everything except that path.
+	header @notshare X-Frame-Options "DENY"
 
 	reverse_proxy admin:8080 {
 		header_up X-Real-IP {remote_host}
