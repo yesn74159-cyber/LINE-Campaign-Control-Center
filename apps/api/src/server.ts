@@ -97,6 +97,9 @@ export function buildApp(injectedRepository?: Repository) {
     registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }
   app.get('/health', async () => ({ ok: true, mode: (process.env.APP_MODE || 'DRY_RUN').toUpperCase(), liveSendEnabled: isLiveSendEnabled(), persistence: repo.kind }));
+  // The LIFF id is public (it appears in every share link) but the Admin bundle must not be
+  // rebuilt when the operator registers the LIFF app, so the id is read from the server here.
+  app.get('/api/config', async () => ({ liffId: process.env.LINE_LIFF_CHANNEL_ID || null }));
   const opsPool = selected.database?.pool;
   if (repo.kind === 'postgres' && opsPool) {
     app.get('/api/ops/delivery-health', { preHandler: authorize('read') }, async (request) => readDeliveryHealth(opsPool, { workspaceId: (request as RequestWithUser).user!.workspaceId }));

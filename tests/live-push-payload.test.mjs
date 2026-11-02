@@ -64,3 +64,18 @@ test('manual text push rejects bad recipients and empty or oversized text', () =
   assert.throws(() => buildManualTextPushBody({ lineUserId: USER, text: 'ก'.repeat(MANUAL_PUSH_TEXT_MAX_CHARS + 1) }), /5000 characters/);
   assert.doesNotThrow(() => buildManualTextPushBody({ lineUserId: USER, text: '😀'.repeat(MANUAL_PUSH_TEXT_MAX_CHARS) }));
 });
+
+const flexWith = (contents) => ({ type: 'flex', altText: 'โปรโมชั่น', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents } } });
+
+test('an unreplaced {{placeholder}} never leaves the server', () => {
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'text', text: '{{TITLE}}' }]) }), /unreplaced placeholder/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'button', action: { type: 'uri', label: 'กด', uri: '{{LIFF_URL}}' } }]) }), /unreplaced placeholder/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: { ...flexWith([]), altText: '{{TITLE}}' } }), /unreplaced placeholder/);
+  assert.doesNotThrow(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'text', text: 'ลด 20% วันนี้' }]) }));
+});
+
+test('a link is refused unless LINE can actually open it', () => {
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'button', action: { type: 'uri', label: 'กด', uri: 'http://example.com' } }]) }), /must be an https:\/\/ or line:\/\/ link/);
+  assert.throws(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'image', url: 'ftp://example.com/a.png' }]) }), /must be an https url/);
+  assert.doesNotThrow(() => buildLivePushBody({ lineUserId: USER, flexMessage: flexWith([{ type: 'button', action: { type: 'uri', label: 'กด', uri: 'https://example.com' } }, { type: 'button', action: { type: 'uri', label: 'เพื่อน', uri: 'line://ti/p/@heekoom' } }]) }));
+});

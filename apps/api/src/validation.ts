@@ -43,6 +43,30 @@ function collectVideoSites(value: unknown, key: string | null, parent: Record<st
 }
 
 const BOX_LAYOUTS = new Set(['horizontal', 'vertical', 'baseline']);
+const PLACEHOLDER = /\{\{[^{}]*\}\}/;
+const LINK_KEYS = new Set(['uri', 'linkUri']);
+const HTTPS_ONLY_KEYS = new Set(['url', 'previewUrl']);
+
+/**
+ * The shipped templates are written with {{VARIABLE}} slots and nothing in this app fills them in,
+ * so a card copied straight out of Flex Studio reaches LINE with the braces still in it and LINE
+ * answers 400. Links are checked here for the same reason: LINE only accepts https (plus line:// taps).
+ */
+function assertFlexStrings(value: unknown, path = 'contents') {
+  if (Array.isArray(value)) { value.forEach((item, index) => assertFlexStrings(item, `${path}[${index}]`)); return; }
+  if (!value || typeof value !== 'object') {
+    if (typeof value === 'string' && PLACEHOLDER.test(value)) throw new Error(`${path} still holds an unreplaced placeholder (${value.slice(0, 40)})`);
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof child === 'string') {
+      if (PLACEHOLDER.test(child)) throw new Error(`${path}.${key} still holds an unreplaced placeholder (${child.slice(0, 40)})`);
+      if (LINK_KEYS.has(key) && !/^(https:\/\/|line:\/\/)/.test(child)) throw new Error(`${path}.${key} must be an https:// or line:// link`);
+      if (HTTPS_ONLY_KEYS.has(key) && !child.startsWith('https://')) throw new Error(`${path}.${key} must be an https url`);
+    }
+    assertFlexStrings(child, `${path}.${key}`);
+  }
+}
 
 /** LINE rejects a box without a layout, so an operator finds out here instead of at send time. */
 function assertBoxLayouts(value: unknown, path = 'contents') {
@@ -56,6 +80,7 @@ function assertBoxLayouts(value: unknown, path = 'contents') {
 /** LINE plays a video only as the hero of one large bubble; anywhere else the card fails to render. */
 function assertFlexVideoRules(flex: Record<string, unknown>) {
   assertBoxLayouts(flex.contents);
+  assertFlexStrings(flex.contents);
   const contents = flex.contents as Record<string, unknown>;
   const sites: VideoSite[] = [];
   collectVideoSites(contents, null, null, sites);
@@ -77,6 +102,7 @@ export function assertFlexJson(value: unknown): Record<string, unknown> {
   const contents = flex.contents as Record<string, unknown> | undefined;
   if (flex.type !== 'flex' || typeof flex.altText !== 'string' || !contents || !['bubble', 'carousel'].includes(String(contents.type))) throw new Error('invalid LINE Flex document');
   if (String(flex.altText).length > 400 || JSON.stringify(value).length > 45000) throw new Error('Flex document exceeds LINE safety limits');
+  if (PLACEHOLDER.test(String(flex.altText))) throw new Error('altText still holds an unreplaced placeholder');
   assertFlexVideoRules(flex);
   return flex;
 }

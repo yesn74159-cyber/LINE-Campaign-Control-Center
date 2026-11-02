@@ -36,6 +36,7 @@
     "test:live-contract": "npm run build:api && node --test tests/live-push-payload.test.mjs",
     "test:push-message": "npm run build:api && node --test tests/push-message.test.mjs",
     "test:push:ui": "npm run build:admin && node --test tests/push-message.ui.test.mjs",
+    "test:liff:ui": "npm run build:admin && node --test tests/liff-share.ui.test.mjs",
     "test:campaign-mock": "npm run build:api && node --test tests/campaign-mock.test.mjs",
     "test:phase5a": "npm run build:api && node --test tests/phase5a.test.mjs",
     "test:phase5b": "npm run build:api && node --test tests/phase5b.test.mjs",

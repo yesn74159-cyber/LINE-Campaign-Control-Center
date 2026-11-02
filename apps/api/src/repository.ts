@@ -6,6 +6,7 @@ import { createSessionToken, hashPassword, hashPasswordSync, hashSessionToken, s
 import { ACCOUNT_TOKEN_TTL_MS, createAccountToken as makeAccountToken, hashAccountToken, issueAccountToken } from './accountTokens.js';
 import type { AccountTokenPurpose, AdminRole, AdminUser, AuditEvent, Campaign, CampaignApprovalStatus, CampaignReadiness, CampaignRevision, Customer, DeliveryContext, JobStatus, OaIntegration, OutboxDelivery, OutboxDeliveryStatus, QuotaReservation, SchedulerJob } from './types.js';
 import { OaPolicyError } from './oaPolicy.js';
+import { fillFlexTemplate } from './flexTemplate.js';
 
 type StoredUser = AdminUser & { passwordHash: string; active: boolean; membershipStatus: 'INVITED' | 'ACTIVE' | 'SUSPENDED' };
 type JobInput = { campaignId: string; oaId: string; scheduledAt: string; timeZone: string; status: 'DRAFT' | 'SCHEDULED'; mode?: 'DRY_RUN' | 'LIVE'; workspaceId: string; actor: string; clientRequestKey?: string };
@@ -64,7 +65,12 @@ export interface Repository {
 function readSeed() {
   const root = path.resolve(process.cwd());
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'campaigns.json'), 'utf8')) as { campaigns: Campaign[] };
-  return manifest.campaigns.map((campaign) => ({ ...campaign, flexJson: JSON.parse(fs.readFileSync(path.join(root, campaign.flexFile), 'utf8')) as Record<string, unknown>, latestRevision: 1 }));
+  return manifest.campaigns.map((campaign) => ({ ...campaign, flexJson: fillFlexTemplate(campaign, JSON.parse(fs.readFileSync(path.join(root, campaign.flexFile), 'utf8')) as Record<string, unknown>), latestRevision: 1 }));
+}
+
+/** A campaign row with no saved revision still has to offer a card the operator can actually send. */
+function bundledTemplate(campaign: Campaign) {
+  try { return fillFlexTemplate(campaign, JSON.parse(fs.readFileSync(path.resolve(process.cwd(), campaign.flexFile), 'utf8')) as Record<string, unknown>); } catch { return undefined; }
 }
 
 function rowDate(value: unknown) { return (value instanceof Date ? value : new Date(String(value))).toISOString(); }
@@ -157,7 +163,7 @@ export function createPostgresRepository(pool: Pool): Repository {
       } catch (error) { await client.query('rollback').catch(() => undefined); throw error; }
       finally { client.release(); }
     },
-    async listCampaigns(workspaceId) { const result = await pool.query(`select c.slug as id, c.name, c.title, c.description, c.image, c.cta, c.flex_file, c.active, r.revision, r.flex_json from campaigns c left join lateral (select revision, flex_json from campaign_revisions where campaign_id=c.id order by revision desc limit 1) r on true where c.active and ($1::uuid is null or c.workspace_id=$1) order by c.created_at`, [workspaceId || null]); return result.rows.map((row) => ({ id: String(row.id), name: String(row.name), title: String(row.title), description: String(row.description), image: String(row.image), cta: String(row.cta), flexFile: String(row.flex_file), active: Boolean(row.active), latestRevision: row.revision ? Number(row.revision) : undefined, flexJson: row.flex_json as Record<string, unknown> | undefined })); },
+    async listCampaigns(workspaceId) { const result = await pool.query(`select c.slug as id, c.name, c.title, c.description, c.image, c.cta, c.flex_file, c.active, r.revision, r.flex_json from campaigns c left join lateral (select revision, flex_json from campaign_revisions where campaign_id=c.id order by revision desc limit 1) r on true where c.active and ($1::uuid is null or c.workspace_id=$1) order by c.created_at`, [workspaceId || null]); return result.rows.map((row) => { const campaign = { id: String(row.id), name: String(row.name), title: String(row.title), description: String(row.description), image: String(row.image), cta: String(row.cta), flexFile: String(row.flex_file), active: Boolean(row.active) }; return { ...campaign, latestRevision: row.revision ? Number(row.revision) : undefined, flexJson: (row.flex_json as Record<string, unknown> | undefined) ?? bundledTemplate(campaign) }; }); },
     async listOas(workspaceId) { const result = await pool.query(`select oa.id, oa.display_name, oa.basic_id, oa.provider_id, oa.environment, oa.enabled, exists(select 1 from oa_credential_vault v where v.oa_integration_id=oa.id and v.workspace_id=oa.workspace_id) as secret_configured, oa.connection_status, oa.credential_status, oa.quota_per_minute, oa.kill_switch, oa.kill_switch_reason from oa_integrations oa where ($1::uuid is null or oa.workspace_id=$1) order by oa.created_at`, [workspaceId || null]); return result.rows.map(mapOa); },
     async listCustomers(workspaceId) { const result = await pool.query('select id, provider_id, line_user_key, display_name, opt_in, blocked_at from customers where ($1::uuid is null or workspace_id=$1) order by created_at desc limit 500', [workspaceId || null]); return result.rows.map((row) => ({ id: String(row.id), providerId: String(row.provider_id), lineUserKey: String(row.line_user_key), displayName: row.display_name ? String(row.display_name) : undefined, optIn: Boolean(row.opt_in), blockedAt: row.blocked_at ? rowDate(row.blocked_at) : undefined })); },
     async listJobs(workspaceId) { const result = await pool.query(`select ${jobProjection} from scheduler_jobs j where ($1::uuid is null or j.workspace_id=$1) order by j.scheduled_at`, [workspaceId || null]); return result.rows.map(mapJob); },
