@@ -99,6 +99,16 @@ test('the share page renders the card and refuses to pretend it can send outside
   assert.deepEqual(errors, []);
 });
 
+test('the card survives the LIFF login/permission redirect that packs ?c= into liff.state', async (t) => {
+  const fixture = harness();
+  const state = encodeURIComponent(`?c=${toBase64Url(CARD)}`);
+  const { page, errors } = await openPage(t, fixture, `/share?liff.state=${state}`);
+  await page.locator('.share-screen').waitFor({ timeout: 10_000 });
+  await page.locator('.flex-render').filter({ hasText: firstFlexText(CARD.contents) }).waitFor({ timeout: 10_000 });
+  assert.equal(await page.getByRole('heading', { name: 'ไม่พบการ์ดในลิงก์' }).count(), 0, 'the card is found through the liff.state wrapper');
+  assert.deepEqual(errors, []);
+});
+
 test('a broken or unconfigured share link explains itself instead of hanging', async (t) => {
   const broken = await openPage(t, harness(), '/share?c=not-a-card');
   await broken.page.getByRole('heading', { name: 'ไม่พบการ์ดในลิงก์' }).waitFor({ timeout: 10_000 });

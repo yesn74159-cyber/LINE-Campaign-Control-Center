@@ -1,5 +1,16 @@
 # Worklog
 
+## 2026-11-02 — The share link must survive the LIFF permission redirect (`liff.state`)
+
+- First phone rehearsal of `/share` on the live LIFF app: the direct link rendered the card (`09:34` nginx `GET /share?c=…`), but after the operator granted `chat_message.write` and LINE brought him back, the page said ไม่พบการ์ดในลิงก์. The access log showed why: the return URL was `GET /share?liff.state=%3Fc%3D…` — when the LIFF SDK redirects for login or a permission grant, LINE packs the **original query string, URL-encoded, into a `liff.state` parameter**, instead of restoring `?c=` bare.
+- `decodeShareLink` in `apps/admin/src/liffShare.ts` now unwraps `liff.state` (`URLSearchParams(state.replace(/^\?/, '')).get('c')`) before declaring the link broken; `decodeShareCard` keeps its length/shape/placeholder checks unchanged. A new browser case in `tests/liff-share.ui.test.mjs` drives `/share?liff.state=%3Fc%3D<base64url(card)>` and requires the card to render. Suite: 4/4 pass, `tsc --noEmit` clean.
+
+## 2026-11-02 — Primary hostname moves to heekoom.dynv6.net after the ccc2u zone was lost
+
+- `ccc2u.dynv6.net` stopped resolving from the authoritative servers (edge healthy, certificate present, zero Caddy hits for the name) and a recreation attempt was refused because deleted dynv6 names stay locked through a grace window. Rather than fight the lock, the primary name moved to `heekoom.dynv6.net` — the OA's own name, which the operator had wanted anyway. Only `.env.staging` changed (backup `.env.staging.bak-20261102T091908Z`): `STAGING_DOMAIN`, `PUBLIC_APP_ORIGIN`, `CORS_ALLOWED_ORIGINS`, `LINE_LOGIN_REDIRECT_URI` point at `heekoom.dynv6.net`; `ccc.bn9.one` stays as `STAGING_ALT_DOMAIN` and the sslip name as `STAGING_ALT2_DOMAIN`. The Caddyfile's third-block work from earlier today covered the rename with no repo change.
+- After `up -d --force-recreate caddy api worker` Caddy obtained the `heekoom.dynv6.net` certificate from Let's Encrypt on the first attempt; `/health` 200 on all three names, gate still `DRY_RUN`/`false`. The LINE console was repointed by the operator (LIFF app "Heegu" endpoint → `https://heekoom.dynv6.net/share`, Login channel callback → the new callback URL) and Linked bots was completed, so all three LIFF prerequisites are now met on the new name.
+- Consequences: LINE Login sessions and admin logins are per-host and had to be redone on the new name (login then verified end-to-end on the operator's phone — callback 302, `/r/…?lineLogin=success`, `line_customers` row created); the dynv6 update-token rotation note from the earlier entry still stands.
+
 ## 2026-11-02 — A second public hostname, because the carrier answers NXDOMAIN for ccc.bn9.one
 
 - The phone rehearsal of the LIFF link never reached `/share`: `ccc.bn9.one` gave `DNS_PROBE_FINISHED_NXDOMAIN` on the operator's mobile network while `13-212-244-219.sslip.io` — same IP, same port, same Caddy — answered `{"ok":true}`. Public resolvers are correct (`ccc.bn9.one A 13.212.244.219 TTL 300`, Cloudflare DNS-only), so this is a name-level block by that network, not an application or edge fault, and proxying through Cloudflare would not help a resolver that refuses the name.

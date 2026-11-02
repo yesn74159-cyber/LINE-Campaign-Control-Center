@@ -51,7 +51,16 @@ export function decodeShareCard(raw: string): FlexCard | null {
 }
 
 export function decodeShareLink(url: string): FlexCard | null {
-  return decodeShareCard(new URL(url).searchParams.get('c') || '');
+  const parsed = new URL(url);
+  const direct = parsed.searchParams.get('c');
+  if (direct) return decodeShareCard(direct);
+  // LINE's login/permission redirect packs the original query into liff.state.
+  const state = parsed.searchParams.get('liff.state');
+  if (state) {
+    const inner = new URLSearchParams(state.replace(/^\?/, '')).get('c');
+    if (inner) return decodeShareCard(inner);
+  }
+  return null;
 }
 
 /**
