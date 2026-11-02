@@ -47,3 +47,11 @@
 	tls {$CADDY_TLS:internal}
 	import tls_edge
 }
+
+# Optional third name. Carriers have been observed to answer NXDOMAIN for the
+# primary domain on mobile networks, so the funnel needs a second public name
+# that resolves everywhere without dropping the first one.
+{$STAGING_ALT2_DOMAIN:localhost} {
+	tls {$CADDY_TLS:internal}
+	import tls_edge
+}

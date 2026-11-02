@@ -123,6 +123,9 @@ services:
     environment:
       STAGING_DOMAIN: ${STAGING_DOMAIN:-localhost}
       STAGING_ALT_DOMAIN: ${STAGING_ALT_DOMAIN:-13-212-244-219.sslip.io}
+      # Every placeholder in the Caddyfile must be passed here, or it silently falls
+      # back to localhost and Caddy starts asking ACME for that name.
+      STAGING_ALT2_DOMAIN: ${STAGING_ALT2_DOMAIN:-localhost}
       CADDY_TLS: ${CADDY_TLS:-internal}
       ACME_EMAIL: ${ACME_EMAIL:-ops@example.invalid}
     volumes:
