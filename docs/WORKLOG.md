@@ -1,5 +1,14 @@
 # Worklog
 
+## 2026-11-05 — Old history can age out; a delivery that has not finished cannot
+
+- `webhook_events`, `audit_log` and `outbox_deliveries` only ever grew. `019` added the age-only indexes they need for a scan that does not start from a workspace, and `apps/api/src/retention.ts` (`pruneHistory`) now deletes in id batches of 5,000 so a backlog cannot hold one long transaction on the 2 GB VM.
+- The window is never implied: `cli prune` refuses to run without `--days N`, and the loader rejects anything that is not an integer in 1–3650. `--dry-run` counts the candidates and deletes nothing, which is the check to run on staging before installing the cron.
+- `outbox_deliveries` deletes only `SENT`, `FAILED` and `SKIPPED`. `PENDING`/`SENDING`/`RETRYABLE` must never be pruned, and `UNKNOWN` is kept too even though it is old: it is the row that says a send may have reached the customer and has not been reconciled yet, so deleting it would erase the only record of a possible duplicate.
+- `deploy/prune-history.sh` + `deploy/install-prune-cron.sh` install one daily line (`# line-ccc-prune`) in the deploy user's crontab, idempotently like the backup and ops installers, targeting 05:20 ICT — after the nightly backup, so a same-night restore still contains the rows this pass removes. The literal is chosen from `timedatectl` (`22:20` on UTC, `05:20` on Asia/Bangkok) and warns instead of guessing on any other zone. The default window is `PRUNE_DAYS=90`.
+- Verification: a new case in `tests/delivery-postgres.integration.test.mjs` seeds 120-day-old and 10-day-old rows in all three tables, runs the dry run (nothing changes) and then a real pass with `batchSize: 1` so the loop is exercised, and asserts the old `SENT` row is gone while old `PENDING` and `UNKNOWN` rows, the recent webhook and the recent audit row survive; `days: 0` is rejected before any query. Suite is 7/7 on a fresh database; `typecheck` and `build:api` clean.
+- Not installed on staging: the script and installer are in the working tree, and `019` (the indexes) is still part of the unapplied migration group.
+
 ## 2026-11-05 — Quota and the campaign stop button moved out of psql
 
 - Two safety rails existed only as SQL: `oa_integrations.quota_per_minute`/`monthly_quota` had no way in from the Admin UI, and `POST /api/campaigns/:id/kill-switch` was reachable only by hand. A pilot operator who needed to throttle an OA or stop a card before a send had to open `psql`.

@@ -8,6 +8,7 @@ import { sealOaSecret, resolveOaAccessToken } from '../dist/api/lineOaConnect.js
 import { buildDeliveryPayload } from '../dist/api/livePushPayload.js';
 import { LiveLineMessagingAdapter, ProviderTransportError } from '../dist/api/lineAdapter.js';
 import { runWorkerOnce } from '../dist/api/worker.js';
+import { pruneHistory } from '../dist/api/retention.js';
 
 const vaultKey = randomBytes(32);
 const tokenValue = 'qa-live-access-token-value';
@@ -278,6 +279,44 @@ test('OA limits and campaign kill switches round-trip through PostgreSQL without
   assert.equal(listed.active, true, 'a stopped campaign stays visible in the library');
   await repository.setCampaignKillSwitch('welcome', tenant.workspaceId, false, 'qa resume', 'qa@delivery.invalid');
   assert.equal((await repository.listCampaigns(tenant.workspaceId)).find((item) => item.id === 'welcome').killSwitch, false);
+});
+
+test('retention deletes only closed history outside the window and never an in-flight delivery', async (t) => {
+  if (skipWithoutDatabase(t)) return;
+  const tenant = await seedTenant(pool, `prune_${Date.now()}`);
+  const job = await createScheduledJob(tenant, new Date());
+  const stamp = Date.now();
+  const insertWebhook = (eventId, age) => pool.query(
+    `insert into webhook_events(workspace_id, oa_integration_id, webhook_event_id, payload_hash, received_at) values ($1,$2,$3,'hash', now() - ($4 || ' days')::interval)`,
+    [tenant.workspaceId, tenant.oaId, eventId, age]
+  );
+  await insertWebhook(`old-${stamp}`, '120');
+  await insertWebhook(`recent-${stamp}`, '10');
+  await pool.query(
+    "insert into audit_log(workspace_id, actor, action, target_type, target_id, created_at) values ($1,'qa','OLD_EVENT','test','old', now() - interval '120 days'), ($1,'qa','RECENT_EVENT','test','recent', now() - interval '10 days')",
+    [tenant.workspaceId]
+  );
+  const insertDelivery = (recipient, status, age) => pool.query(
+    `insert into outbox_deliveries(workspace_id, scheduler_job_id, oa_integration_id, recipient_key, idempotency_key, line_retry_key, status, created_at) values ($1,$2,$3,$4,gen_random_uuid(),gen_random_uuid(),$5, now() - ($6 || ' days')::interval) returning id`,
+    [tenant.workspaceId, job.id, tenant.oaId, recipient, status, age]
+  );
+  const sentId = (await insertDelivery(`U${'e'.repeat(32)}`, 'SENT', '120')).rows[0].id;
+  const pendingId = (await insertDelivery(`U${'f'.repeat(32)}`, 'PENDING', '120')).rows[0].id;
+  const unknownId = (await insertDelivery(`U${'9'.repeat(32)}`, 'UNKNOWN', '120')).rows[0].id;
+
+  const preview = await pruneHistory(pool, { days: 90, dryRun: true });
+  assert.ok(preview.tables.find((item) => item.table === 'webhook_events').candidates >= 1);
+  assert.equal((await pool.query('select count(*)::int as count from outbox_deliveries where id=$1', [sentId])).rows[0].count, 1, 'a dry run deletes nothing');
+
+  const pruned = await pruneHistory(pool, { days: 90, dryRun: false, batchSize: 1 });
+  assert.equal(pruned.tables.find((item) => item.table === 'outbox_deliveries').deleted, 1);
+  assert.equal((await pool.query('select count(*)::int as count from outbox_deliveries where id=$1', [sentId])).rows[0].count, 0);
+  assert.equal((await pool.query('select count(*)::int as count from outbox_deliveries where id=$1', [pendingId])).rows[0].count, 1, 'a delivery still in flight is kept however old it is');
+  assert.equal((await pool.query('select count(*)::int as count from outbox_deliveries where id=$1', [unknownId])).rows[0].count, 1, 'an unresolved send is kept for reconciliation');
+  assert.equal((await pool.query("select count(*)::int as count from webhook_events where webhook_event_id=$1", [`recent-${stamp}`])).rows[0].count, 1);
+  assert.equal((await pool.query("select count(*)::int as count from audit_log where workspace_id=$1 and action='RECENT_EVENT'", [tenant.workspaceId])).rows[0].count, 1);
+  assert.equal((await pool.query("select count(*)::int as count from audit_log where workspace_id=$1 and action='OLD_EVENT'", [tenant.workspaceId])).rows[0].count, 0);
+  await assert.rejects(() => pruneHistory(pool, { days: 0, dryRun: true }), /between 1 and 3650/);
 });
 
 test('live adapter contract resolves the vault token and sends once through a fake HTTP transport', async (t) => {

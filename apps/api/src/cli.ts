@@ -14,6 +14,7 @@ import {
 import { rotationKeys, rotateVault } from './vaultRotate.js';
 import { recheckOaAccessToken, vaultKey } from './lineOaConnect.js';
 import { seedStaging } from './seed.js';
+import { pruneHistory } from './retention.js';
 
 function readAlertState(file: string): OpsAlertState | null {
   try {
@@ -90,6 +91,13 @@ try {
     const dryRun = !process.argv.includes('--confirm');
     const keys = rotationKeys();
     console.log(JSON.stringify(await rotateVault(database.pool, { ...keys, dryRun })));
+  }
+  else if (command === 'prune') {
+    // There is no default window: deleting history is only ever done with a stated number of days.
+    const daysAt = process.argv.indexOf('--days');
+    if (daysAt === -1 || process.argv[daysAt + 1] === undefined) throw new Error('prune requires --days N (for example: prune --days 90 --dry-run)');
+    const days = Number(process.argv[daysAt + 1]);
+    console.log(JSON.stringify(await pruneHistory(database.pool, { days, dryRun: process.argv.includes('--dry-run') })));
   }
   else throw new Error(`unknown database command: ${command}`);
 } finally { await database.close(); }
