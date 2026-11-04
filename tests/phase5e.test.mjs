@@ -340,8 +340,11 @@ test('scheduled_at is read as Asia/Bangkok from the API and the admin form', asy
 
   const installer = read('deploy/install-backup-cron.sh');
   assert.match(installer, /timedatectl show -p Timezone --value/);
-  assert.match(installer, /UTC\|Etc\/UTC\) SCHEDULE="30 20 \* \* \*";;/);
-  assert.match(installer, /Asia\/Bangkok\) SCHEDULE="30 3 \* \* \*";;/);
+  // The check line runs after the backup line, in the same host zone.
+  assert.match(installer, /UTC\|Etc\/UTC\) SCHEDULE="30 20 \* \* \*"; VERIFY_SCHEDULE="45 20 \* \* \*";;/);
+  assert.match(installer, /Asia\/Bangkok\) SCHEDULE="30 3 \* \* \*"; VERIFY_SCHEDULE="45 3 \* \* \*";;/);
+  assert.match(installer, /VERIFY_TAG="# line-ccc-backup-verify"/);
+  assert.match(installer, /grep -vF -- "\$VERIFY_TAG"/);
   assert.match(installer, /neither UTC nor Asia\/Bangkok/);
 });
 
@@ -465,6 +468,35 @@ test('backup, restore and cloud audit scripts refuse unsafe invocations', () => 
   const auditNoUrl = spawnSync(process.execPath, ['scripts/cloud-audit.mjs', '--confirm'], { cwd: root, env: baseEnv, encoding: 'utf8' });
   assert.equal(auditNoUrl.status, 2);
   assert.match(auditNoUrl.stderr, /AUDIT_DATABASE_URL/);
+});
+
+test('every service runs a tagged image so a release can be rolled back', () => {
+  const compose = read('docker-compose.staging.yml');
+  const anchor = compose.slice(compose.indexOf('x-app:'), compose.indexOf('\nservices:'));
+  // api and worker share the anchor, so the api tag is what the worker runs too.
+  assert.match(anchor, /image: line-ccc-api:\$\{RELEASE_TAG:-local\}/);
+  assert.doesNotMatch(serviceBlock(compose, 'worker'), /image:/, 'worker must not pin its own image');
+  assert.match(serviceBlock(compose, 'admin'), /image: line-ccc-admin:\$\{RELEASE_TAG:-local\}/);
+  assert.match(read('deploy/staging.env.example'), /^RELEASE_TAG=local$/m);
+
+  const release = read('deploy/release.sh');
+  assert.match(release, /compose build api admin/);
+  assert.match(release, /docker image inspect "\$image"/, 'a missing tag must fail before the stack is recreated');
+  // The tag lands in the same file compose reads, without clobbering the rest of the secrets.
+  assert.match(release, /grep -v '\^RELEASE_TAG=' "\$ENV_FILE"/);
+  assert.match(release, /printf 'RELEASE_TAG=%s\\n' "\$tag"/);
+  assert.match(release, /cat "\$tmp" > "\$ENV_FILE"/);
+  assert.match(release, /compose up -d --no-build/);
+  assert.match(release, /if \[ "\$\{1:-\}" != "--no-build" \]; then/);
+  assert.match(release, /\*\[!A-Za-z0-9\._-\]\*\)/, 'a tag with shell metacharacters must be refused');
+  assert.match(release, /rollback: RELEASE_TAG=<previous> bash deploy\/release\.sh --no-build/);
+
+  const rollback = read('docs/ROLLBACK.md');
+  assert.match(rollback, /RELEASE_TAG=<tag-ก่อนหน้า> bash deploy\/release\.sh --no-build/);
+  assert.match(rollback, /docker images line-ccc-api/);
+  // The document has to say out loud that images move backwards and schema does not.
+  assert.match(rollback, /Migration ไม่ย้อนตาม image/);
+  assert.match(rollback, /`local` ไม่ใช่ tag สำหรับ rollback/);
 });
 
 test('cloud audit SQL is read-only and checks ledger, RLS, grants, indexes and parity', () => {

@@ -43,6 +43,10 @@ fail() {
   # a run that fails after the copy must not leave its scratch archive in the container
   compose exec -T "$SERVICE" sh -c "rm -f '$check'" > /dev/null 2>&1 || true
   printf '%s %s FAIL %s\n' "$(date -u +%FT%TZ)" "$LABEL" "$1" >> "$log"
+  # The five-minute ops pass only reads delivery health, so a dump that stopped verifying
+  # would page nobody. Push the failure to the same channel here; the CLI reads the webhook
+  # from the container's env_file, so no secret is written into this file or its argv.
+  compose run --rm --no-deps api node dist/api/cli.js alert --text "backup FAIL ($LABEL): $1" > /dev/null 2>&1 || true
   printf 'backup failed: %s\n' "$1" >&2
   exit 1
 }

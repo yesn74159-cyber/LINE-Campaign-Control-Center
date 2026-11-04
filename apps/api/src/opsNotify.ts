@@ -131,18 +131,16 @@ export function alertWebhookUrl(raw = process.env.OPS_ALERT_WEBHOOK_URL): string
   return url.toString();
 }
 
-export async function sendOpsAlert(
+async function postAlert(
+  transport: typeof fetch,
   webhookUrl: string,
-  health: DeliveryHealth,
-  options: { transport?: typeof fetch; format?: OpsAlertFormat; chatId?: string | null } = {}
+  buildBody: () => unknown
 ): Promise<{ delivered: boolean; status: number | null }> {
-  const transport = options.transport || fetch;
-  const format = options.format || 'generic';
   try {
     const response = await transport(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'user-agent': 'line-ccc-ops/1' },
-      body: JSON.stringify(buildOpsAlertBody(format, health, options.chatId ?? null)),
+      body: JSON.stringify(buildBody()),
       redirect: 'error',
       cache: 'no-store',
       signal: AbortSignal.timeout(5000)
@@ -151,4 +149,37 @@ export async function sendOpsAlert(
   } catch {
     return { delivered: false, status: null };
   }
+}
+
+export async function sendOpsAlert(
+  webhookUrl: string,
+  health: DeliveryHealth,
+  options: { transport?: typeof fetch; format?: OpsAlertFormat; chatId?: string | null } = {}
+): Promise<{ delivered: boolean; status: number | null }> {
+  const format = options.format || 'generic';
+  return postAlert(options.transport || fetch, webhookUrl, () => buildOpsAlertBody(format, health, options.chatId ?? null));
+}
+
+/**
+ * A failure outside delivery health — the nightly dump did not verify — still has to reach
+ * the same room. The envelope carries the text and nothing else; the text is written by the
+ * caller and must never contain a token, a URL or a customer row.
+ */
+export function buildAlertTextBody(format: OpsAlertFormat, text: string, chatId: string | null = null): unknown {
+  if (format === 'slack') return { text };
+  if (format === 'discord') return { content: text };
+  if (format === 'telegram') {
+    if (!chatId) throw new Error('OPS_TELEGRAM_CHAT_ID is required for telegram alerts');
+    return { chat_id: chatId, text, disable_web_page_preview: true };
+  }
+  return { source: 'line-campaign-control-center', generatedAt: new Date().toISOString(), text };
+}
+
+export async function sendOpsText(
+  webhookUrl: string,
+  text: string,
+  options: { transport?: typeof fetch; format?: OpsAlertFormat; chatId?: string | null } = {}
+): Promise<{ delivered: boolean; status: number | null }> {
+  const format = options.format || 'generic';
+  return postAlert(options.transport || fetch, webhookUrl, () => buildAlertTextBody(format, text, options.chatId ?? null));
 }

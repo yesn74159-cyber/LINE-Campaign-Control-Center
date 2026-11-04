@@ -8,6 +8,9 @@ x-app: &app
     context: .
     dockerfile: deploy/Dockerfile
     target: api
+  # Every release lands under its own tag, so rolling back is `RELEASE_TAG=<old> up -d`
+  # instead of a rebuild of code that no longer matches the running database.
+  image: line-ccc-api:${RELEASE_TAG:-local}
   env_file:
     - .env.staging
   # Log timestamps and any Date constructed from a local string must land in the same
@@ -95,6 +98,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
       target: admin
+    image: line-ccc-admin:${RELEASE_TAG:-local}
     container_name: line-ccc-admin-staging
     restart: unless-stopped
     logging:

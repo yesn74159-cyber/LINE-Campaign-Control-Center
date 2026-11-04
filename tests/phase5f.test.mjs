@@ -10,8 +10,8 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\
 const { sealOaSecret, openOaSecret } = await import('../dist/api/lineOaConnect.js');
 const { rotationKeys, rotateVault } = await import('../dist/api/vaultRotate.js');
 const {
-  buildOpsAlert, buildOpsAlertBody, alertWebhookUrl, opsAlertMessage, opsAlertFormat, opsAlertFormatFor,
-  opsAlertSignature, opsTelegramChatId, sendOpsAlert, shouldSendOpsAlert
+  buildAlertTextBody, buildOpsAlert, buildOpsAlertBody, alertWebhookUrl, opsAlertMessage, opsAlertFormat, opsAlertFormatFor,
+  opsAlertSignature, opsTelegramChatId, sendOpsAlert, sendOpsText, shouldSendOpsAlert
 } = await import('../dist/api/opsNotify.js');
 
 const workspaceA = '11111111-1111-4111-8111-111111111111';
@@ -239,6 +239,43 @@ test('telegram alerts use the bot payload and never carry identifiers', async ()
   assert.ok(!JSON.stringify(captured).includes('secret-oa-id'));
   const missingChat = await sendOpsAlert('https://api.telegram.org/bot123/sendMessage', healthFixture, { transport, format: 'telegram' });
   assert.deepEqual(missingChat, { delivered: false, status: null });
+});
+
+test('a backup failure is pushed as text through the same webhook, without secrets', async () => {
+  assert.deepEqual(buildAlertTextBody('slack', 'backup FAIL'), { text: 'backup FAIL' });
+  assert.deepEqual(buildAlertTextBody('discord', 'backup FAIL'), { content: 'backup FAIL' });
+  assert.deepEqual(buildAlertTextBody('telegram', 'backup FAIL', '-100'), { chat_id: '-100', text: 'backup FAIL', disable_web_page_preview: true });
+  assert.throws(() => buildAlertTextBody('telegram', 'backup FAIL'), /OPS_TELEGRAM_CHAT_ID/);
+  const generic = buildAlertTextBody('generic', 'backup FAIL');
+  assert.equal(generic.text, 'backup FAIL');
+  assert.equal(generic.source, 'line-campaign-control-center');
+  assert.ok(!JSON.stringify(generic).includes('bot'));
+
+  let captured = null;
+  const transport = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    return { ok: true, status: 200 };
+  };
+  const delivered = await sendOpsText('https://api.telegram.org/bot123/sendMessage', 'backup FAIL: archive lists only 3 tables', { transport, format: 'telegram', chatId: '-100' });
+  assert.deepEqual(delivered, { delivered: true, status: 200 });
+  assert.equal(captured.chat_id, '-100');
+  assert.match(captured.text, /backup FAIL/);
+
+  // The host never handles the token: the container's env_file supplies it, and cli.ts
+  // is the only path that turns --text into a request.
+  const cli = read('apps/api/src/cli.ts');
+  assert.match(cli, /command === 'alert'/);
+  assert.match(cli, /alert requires --text/);
+  assert.match(cli, /sendOpsText\(webhookUrl, text, \{ format, chatId \}\)/);
+  const backup = read('deploy/nightly-backup.sh');
+  assert.match(backup, /cli\.js alert --text "backup FAIL/);
+  assert.match(backup, /--no-deps/);
+  const verify = read('deploy/verify-backup.sh');
+  assert.match(verify, /MAX_AGE_HOURS/);
+  assert.match(verify, /\.offsite-verified/);
+  assert.match(verify, /cli\.js alert --text "backup check FAIL/);
+  assert.match(read('deploy/install-backup-cron.sh'), /line-ccc-backup-verify/);
+  assert.match(read('deploy/offsite-backup.ps1'), /\.offsite-verified/);
 });
 
 test('a standing alert set is not re-sent on every five-minute pass', () => {

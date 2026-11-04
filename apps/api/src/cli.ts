@@ -8,6 +8,7 @@ import {
   opsAlertSignature,
   opsTelegramChatId,
   sendOpsAlert,
+  sendOpsText,
   shouldSendOpsAlert,
   type OpsAlertState
 } from './opsNotify.js';
@@ -67,6 +68,22 @@ try {
       }
     }
     if (!health.ok) process.exitCode = 1;
+  }
+  else if (command === 'alert') {
+    // Plain text for failures that are not delivery health (a backup that did not verify).
+    // The webhook and chat id come from the container's env_file, so the caller never
+    // handles the bot token and it never appears in a shell history or a process list.
+    const at = process.argv.indexOf('--text');
+    const text = (at === -1 ? '' : process.argv[at + 1] || '').trim();
+    if (!text) throw new Error('alert requires --text "message"');
+    const webhookUrl = alertWebhookUrl();
+    if (!webhookUrl) throw new Error('OPS_ALERT_WEBHOOK_URL is not set');
+    const format = opsAlertFormatFor(webhookUrl);
+    const chatId = format === 'telegram' ? opsTelegramChatId() : null;
+    if (format === 'telegram' && !chatId) throw new Error('OPS_TELEGRAM_CHAT_ID is not set');
+    const delivery = await sendOpsText(webhookUrl, text, { format, chatId });
+    console.error(JSON.stringify({ notified: delivery.delivered, status: delivery.status }));
+    if (!delivery.delivered) process.exitCode = 1;
   }
   else if (command === 'oa-token-check') {
     // Read-only: bot info GET per enabled staging OA. It updates the check timestamps but never

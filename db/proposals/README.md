@@ -10,6 +10,12 @@
 | `015_tier_c_app_role.sql` | C | สร้าง role `line_ccc_app` (NOBYPASSRLS) + grant DML + default privileges + permissive policy ทุกตารางที่ยังไม่มี policy — **อนุมัติรายการ SQL + หน้าต่างเวลาแล้ว (2026-11-04), ยังไม่ apply**; apply ผ่าน `deploy/tier-c-apply.sh` |
 | `verify-tier-c.sql` | read-only | ตรวจ attributes ของ role, coverage ของ policy, drift (ตารางที่ app role มองไม่เห็น/เขียนไม่ได้), สิทธิ์ DDL, default privileges, sequences และ probe เทียบจำนวนแถว owner vs app role ใน transaction เดียว |
 
+## งานข้อมูล (ไม่ใช่ RLS)
+
+| ไฟล์ | ผู้รัน | ผล |
+| --- | --- | --- |
+| `020_seed_oa_cleanup.sql` | เจ้าของ (`psql --single-transaction`) | เปลี่ยนชื่อเป็น `(seed – ไม่ใช้)` + `basic_id=@unused-seed-1/2` + `enabled=false` ให้ 2 แถว OA seed ที่แชร์ `provider_id='staging-provider'` กับ OA จริง; guard จะหยุดถ้า id prefix `b1e648d0-`/`5059f7fc-` ไม่ match อย่างละ 1 แถว; **ไม่ลบแถว**; ยังไม่ apply บน staging |
+
 ## Tier C สรุปจากผลซ้อม 2026-11-04
 
 - **demote `line_ccc` ไม่ได้** — เป็น bootstrap user ของ initdb (เพราะ compose ตั้ง `POSTGRES_USER=line_ccc`) และ PostgreSQL ห้ามเอา SUPERUSER ออกจาก role นี้ (`DETAIL: The bootstrap user must have the SUPERUSER attribute.`) Tier C จึงเป็น "แยก connection" ไม่ใช่ "ลบสิทธิ์": runtime ใช้ `line_ccc_app`, owner เหลือไว้สำหรับ migrate/DDL/backup/restore เท่านั้น

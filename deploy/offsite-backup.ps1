@@ -36,6 +36,17 @@ function Test-Dump {
   return ($expected.Length -eq 64) -and ($expected -eq $actual)
 }
 
+# verify-backup.sh cannot see this machine, so the host carries a marker proving an
+# off-VM copy exists. It must name the newest dump: a marker left over from last week
+# says nothing about tonight's file.
+function Set-OffsiteMarker {
+  param([string]$Name)
+  $stamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+  Invoke-Remote "printf '%s %s\n' '$stamp' '$Name' > $RemoteDir/.offsite-verified"
+  if ($LASTEXITCODE -ne 0) { throw "could not write $RemoteDir/.offsite-verified - verify-backup.sh will keep alerting" }
+  Write-Output "off-host marker recorded on ${Target}: $stamp $Name"
+}
+
 $listing = Invoke-Remote "ls -1t $RemoteDir/nightly-*.dump 2>/dev/null | head -1"
 $remotePath = (@($listing) | Where-Object { $_ -match 'nightly-.*\.dump$' } | Select-Object -First 1)
 if (-not $remotePath) {
@@ -48,6 +59,7 @@ $sidecar = "$local.sha256"
 if (Test-Path -LiteralPath $local) {
   if (Test-Dump $local $sidecar) {
     Write-Output "already held locally and verified: $local"
+    Set-OffsiteMarker $name
     exit 0
   }
   Write-Output "local copy of $name does not verify - re-downloading"
@@ -58,6 +70,7 @@ scp -i $KeyPair -o BatchMode=yes "${Target}:${remotePath}.sha256" $Dest
 
 if (-not (Test-Dump $local $sidecar)) { throw "checksum mismatch for $name - the downloaded dump is NOT usable" }
 Write-Output "verified: $((Get-Item -LiteralPath $local).Length) bytes, sha256 matches the host sidecar"
+Set-OffsiteMarker $name
 
 # Rotation matches only nightly-* pairs; manual dumps already in this folder are kept.
 $held = @(Get-ChildItem -LiteralPath $Dest -Filter 'nightly-*.dump' | Sort-Object Name -Descending)
