@@ -16,7 +16,10 @@ function templateVars(campaign: Campaign) {
     CTA: campaign.cta,
     IMAGE_URL: `${origin}/flex/${image}`,
     LIFF_URL: liffId ? `https://liff.line.me/${liffId}` : `${origin}/share`,
-    OA_URL: process.env.LINE_OA_FRIEND_URL || origin
+    // Never the bare origin: `https://66t.online` is the operator's login page, and a customer
+    // tapping a button labelled "เพิ่มเพื่อน OA" must not land there. /share is the page that
+    // answers the add-friend link for the enabled OA.
+    OA_URL: process.env.LINE_OA_FRIEND_URL || `${origin}/share`
   } as Record<string, string>;
 }
 

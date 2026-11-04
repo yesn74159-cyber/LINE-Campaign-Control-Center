@@ -43,6 +43,21 @@ test('saving the filled card back hands the URLs to the database, not this host 
   delete process.env.LINE_LIFF_CHANNEL_ID;
 });
 
-test('a slot this app cannot know is left in place for the validator to refuse', () => {  const filled = fillFlexTemplate(campaigns[0], { type: 'flex', altText: '{{COUPON_CODE}}', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '{{TITLE}}' }] } } });
+test('the add-friend slot never resolves to the bare site origin, which is the operator login page', () => {
+  process.env.PUBLIC_APP_ORIGIN = 'https://66t.online';
+  process.env.LINE_LIFF_CHANNEL_ID = '12345678-AbCdEf';
+  const profile = campaigns.find((item) => item.id === 'profile');
+  const raw = JSON.parse(fs.readFileSync(path.join(root, profile.flexFile), 'utf8'));
+  const filled = JSON.stringify(fillFlexTemplate(profile, raw));
+  assert.doesNotMatch(filled, /"uri":"https:\/\/66t\.online"/, 'a customer tapping เพิ่มเพื่อน OA must not reach the Admin sign-in screen');
+  assert.match(filled, /https:\/\/66t\.online\/share/, 'the funnel page that answers the OA add-friend link is the fallback');
+  process.env.LINE_OA_FRIEND_URL = 'https://line.me/R/ti/p/@453yfyvc';
+  assert.match(JSON.stringify(fillFlexTemplate(profile, raw)), /line\.me\/R\/ti\/p\/@453yfyvc/);
+  delete process.env.LINE_OA_FRIEND_URL;
+  delete process.env.LINE_LIFF_CHANNEL_ID;
+});
+
+test('a slot this app cannot know is left in place for the validator to refuse', () => {
+  const filled = fillFlexTemplate(campaigns[0], { type: 'flex', altText: '{{COUPON_CODE}}', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '{{TITLE}}' }] } } });
   assert.deepEqual(braces(filled), ['{{COUPON_CODE}}'], 'only the known slot was substituted');
 });
