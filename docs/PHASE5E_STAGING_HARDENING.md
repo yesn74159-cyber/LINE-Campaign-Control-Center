@@ -155,6 +155,23 @@ bash deploy/install-backup-cron.sh --run-now
 
 ซ้อมบนเครื่องผู้พัฒนา 2026-11-04 ด้วย postgres:16-alpine และฐานข้อมูล 5 ตาราง: กรณีผ่านได้ dump 4,508 bytes (tables=5, sha256 OK) และเมื่อ restore เข้า DB ใหม่แล้วนับแถวได้ 50/200 ตรงต้นฉบับ ส่วนกรณีไม่ผ่านตั้ง `MIN_TABLES=50` กับ service ที่ไม่ทำงาน แล้วไม่มีไฟล์ `.partial` ค้างบน host ไม่มี scratch ค้างใน container; rotation แบบ `KEEP=2` เหลือ 2 ไฟล์ล่าสุดโดย `pre014-*` ยังอยู่ครบ; installer เพิ่ม/คง/แทนที่บรรทัดได้ถูกต้องและเก็บ entry อื่นไว้ครบ; และปฏิเสธก่อนแตะ crontab เมื่อ docker หรือ script ขาด
 
+### สำเนาออกนอก VM (ฝั่งคนพัฒนา, PowerShell)
+
+`deploy/offsite-backup.ps1` ดึง dump ที่ใหม่ที่สุดจาก `backups/` ของ VM มาเก็บที่ `%USERPROFILE%\.line-ccc-secrets\backups` (ค่า default ของ script) แล้วตรวจ sha256 กับ sidecar ก่อนรายงานผล
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File deploy\offsite-backup.ps1
+```
+
+- ถ้าเครื่องมีไฟล์ชื่อนั้นอยู่แล้วและ hash ผ่าน จะจบทันที (รันซ้ำได้ทุกวันโดยไม่ดึงซ้ำ)
+- ถ้า hash ไม่ตรงจะ `throw` ว่า dump ที่โหลดมาใช้ไม่ได้ ไม่ได้ปล่อยผ่าน
+- rotation ลบเฉพาะไฟล์ `nightly-*.dump` ที่เก่าเกิน `Keep` (ตั้งไว้ 7 ชุดล่าสุด) พร้อมคู่ sidecar ของมัน ส่วน dump ที่ตั้งชื่อเองอย่าง `pre014-*`, `post013-*` ไม่ถูกแตะ
+- ท้ายการรันจะแสดง `backup.log` 5 บรรทัดล่าสุดจาก VM เพื่อให้เห็นแถว `FAIL` ที่ไม่งั้นจะไม่มีใครอ่าน
+- ไฟล์เป็น ASCII ทั้งหมดโดยเจตนา: Windows PowerShell 5.1 อ่าน `.ps1` ที่ไม่มี BOM เป็น ANSI ตัวอักษร non-ASCII ตัวเดียวจะทำให้ string ทั้งไฟล์เพี้ยน
+- ข้อจำกัดที่ยังเหลือ: เครื่อง workstation เป็นสำเนานอก VM จุดเดียว (เครื่องหาย = หมด) และการรันยังเป็นการกดมือ ไม่ใช่ auto — ถ้าจะ auto ให้ลง Task Scheduler ที่เครื่องนี้ ไม่ใช่ที่ VM
+
+ตรวจรับของ script นี้ (2026-11-04, ในเครื่อง): parse ผ่าน, `Test-Dump` ให้ `True` กับคู่ sidecar จริงที่ VM สร้าง (`post013-…dump`), ให้ `False` เมื่อ flip 1 byte และเมื่อ sidecar หาย, ส่วน rotation ลบ 2 คู่เก่าสุดจริงและคง `pre014-*` ไว้, guard ทั้งสอง (key pair ไม่มี / host ติดไม่ได้) ล้มเหลวพร้อมข้อความที่ระบุเหตุ ยังไม่ถึงขั้น scp จาก VM จริง
+
 ## Acceptance checklist
 
 - [x] CI มี job สำหรับ PG ครบ (line-login, referral, webhook, delivery, tenant, phase4a, phase4b, integration)
