@@ -46,6 +46,13 @@ function loadLiffSdk() {
 
 export default function LiffSharePage() {
   const card = useMemo<FlexCard | null>(() => decodeShareLink(window.location.href), []);
+  // A link that asked for a card and got a broken one is an error. A link with no card at all is
+  // where a shared Flex button lands, so it has to behave like a landing page instead.
+  const cardWasRequested = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('c') || params.has('liff.state');
+  }, []);
+  const [oaUrl, setOaUrl] = useState<string | null | undefined>(undefined);
   const [liffId, setLiffId] = useState<string | null | undefined>(undefined);
   const [phase, setPhase] = useState<'loading' | 'idle' | 'ready' | 'outside'>('loading');
   const [status, setStatus] = useState('กำลังเชื่อมต่อ LINE…');
@@ -55,10 +62,11 @@ export default function LiffSharePage() {
 
   useEffect(() => {
     let alive = true;
-    void fetch('/api/config').then((response) => response.json()).then((config: { liffId?: string | null }) => {
+    void fetch('/api/config').then((response) => response.json()).then((config: { liffId?: string | null; oaUrl?: string | null }) => {
       if (!alive) return;
       setLiffId(config.liffId || null);
-    }).catch(() => { if (alive) setLiffId(null); });
+      setOaUrl(config.oaUrl || null);
+    }).catch(() => { if (alive) { setLiffId(null); setOaUrl(null); } });
     return () => { alive = false; };
   }, []);
 
@@ -94,7 +102,22 @@ export default function LiffSharePage() {
   }, [card, liffId]);
 
   if (!card) {
-    return <div className="auth-screen"><div className="auth-card"><h1>ไม่พบการ์ดในลิงก์</h1><p className="auth-copy">ลิงก์แชร์ต้องสร้างจากหน้า Flex Studio · กลับไปกดปุ่ม “แชร์จากมือถือ (LIFF)” อีกครั้ง</p></div></div>;
+    if (cardWasRequested) {
+      return <div className="auth-screen"><div className="auth-card"><h1>ไม่พบการ์ดในลิงก์</h1><p className="auth-copy">ลิงก์แชร์ต้องสร้างจากหน้า Flex Studio · กลับไปกดปุ่ม “แชร์จากมือถือ (LIFF)” อีกครั้ง</p></div></div>;
+    }
+    if (oaUrl === undefined) {
+      return <div className="auth-screen"><div className="auth-card"><h1>กำลังเชื่อมต่อ LINE OA…</h1><p className="auth-copy">กำลังเช็กว่าบัญชี OA ที่เปิดใช้งานอยู่คือบัญชีไหน</p></div></div>;
+    }
+    if (!oaUrl) {
+      return <div className="auth-screen"><div className="auth-card"><h1>ยังไม่ตั้งค่า LINE OA บนเซิร์ฟเวอร์</h1><p className="auth-copy">เปิดใช้งานบัญชี OA ในหน้าบัญชี LINE OA หรือใส่ LINE_OA_FRIEND_URL ใน .env.staging แล้วเริ่ม container API ใหม่</p></div></div>;
+    }
+    return <div className="share-screen">
+      <header className="share-head"><p className="eyebrow green">LINE OA</p><h1>เพิ่มเพื่อนเพื่อรับกิจกรรม</h1><p>การ์ดที่เพื่อนส่งให้พาเข้ามาถึงหน้าแชร์โดยไม่มีการ์ดแนบมา · กดด้านล่างเพื่อเป็นผู้ติดตาม LINE OA แล้วรอรับโปรโมชั่นในแชท</p></header>
+      <section className="share-actions">
+        <a className="primary full" href={oaUrl} rel="noopener">เพิ่มเพื่อนที่ LINE OA</a>
+        <p className="form-note">ถ้าลิงก์นี้ควรมีการ์ดมาด้วย ให้กลับไปกด “แชร์จากมือถือ (LIFF)” ใน Flex Studio แล้วส่งใหม่ทั้งลิงก์</p>
+      </section>
+    </div>;
   }
 
   if (liffId === undefined) {

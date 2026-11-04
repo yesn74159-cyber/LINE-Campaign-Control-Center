@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 const staticRoot = path.resolve('dist/admin');
 const html = readFileSync(path.join(staticRoot, 'index.html'));
 const LIFF_ID = '12345678-AbCdEf';
+const OA_URL = 'https://line.me/R/ti/p/@heekoom';
 const CARD = { type: 'flex', altText: 'ลด 20% วันนี้', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ใส่โค้ด HEKO20 ก่อนสองทุ่ม' }, { type: 'button', style: 'primary', action: { type: 'uri', label: 'เพิ่มเพื่อน', uri: 'https://line.me/R/ti/p/@heekoom' } }] } } };
 
 function toBase64Url(value) {
@@ -26,14 +27,14 @@ function firstFlexText(node) {
 }
 
 /** The Admin bundle against a stubbed API; /share is exercised outside LINE on purpose. */
-function harness({ liffId = LIFF_ID } = {}) {
+function harness({ liffId = LIFF_ID, oaUrl = OA_URL } = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
     const send = (body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (pathname.startsWith('/api/') || pathname === '/health') {
       if (pathname === '/health') return send({ ok: true, mode: 'DRY_RUN', liveSendEnabled: false, persistence: 'postgres' });
-      if (pathname === '/api/config') return send({ liffId });
+      if (pathname === '/api/config') return send({ liffId, oaUrl });
       if (pathname === '/api/auth/me') return send({ user: { id: 'owner-a', displayName: 'Test Owner', role: 'owner', email: 'owner@example.test' } });
       if (pathname === '/api/dashboard') return send({ mode: 'DRY_RUN', persistence: 'postgres', appMode: 'DRY_RUN', liveSendEnabled: false, counts: {}, nextJob: null });
       if (pathname === '/api/campaigns') return send({ campaigns: [{ id: 'welcome', name: 'ต้อนรับ', title: 'ยินดีต้อนรับ', description: 'สวัสดีครับ', cta: 'ดูโปรโมชั่น' }] });
@@ -115,4 +116,15 @@ test('a broken or unconfigured share link explains itself instead of hanging', a
 
   const unconfigured = await openPage(t, harness({ liffId: null }), `/share?c=${toBase64Url(CARD)}`);
   await unconfigured.page.getByRole('heading', { name: 'ยังไม่ตั้งค่า LIFF บนเซิร์ฟเวอร์' }).waitFor({ timeout: 10_000 });
+});
+
+// A shared card carries only the bare LIFF url in its button, so this page is the one thing that
+// can still route a friend to the OA after the card has already left the operator's hands.
+test('the bare LIFF url that every shared card points at finishes the funnel', async (t) => {
+  const landing = await openPage(t, harness(), '/share');
+  await landing.page.getByRole('heading', { name: 'เพิ่มเพื่อนเพื่อรับกิจกรรม' }).waitFor({ timeout: 10_000 });
+  assert.equal(await landing.page.locator('a.primary.full').getAttribute('href'), OA_URL);
+
+  const unlinked = await openPage(t, harness({ oaUrl: null }), '/share');
+  await unlinked.page.getByRole('heading', { name: 'ยังไม่ตั้งค่า LINE OA บนเซิร์ฟเวอร์' }).waitFor({ timeout: 10_000 });
 });

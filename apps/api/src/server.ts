@@ -99,7 +99,20 @@ export function buildApp(injectedRepository?: Repository) {
   app.get('/health', async () => ({ ok: true, mode: (process.env.APP_MODE || 'DRY_RUN').toUpperCase(), liveSendEnabled: isLiveSendEnabled(), persistence: repo.kind }));
   // The LIFF id is public (it appears in every share link) but the Admin bundle must not be
   // rebuilt when the operator registers the LIFF app, so the id is read from the server here.
-  app.get('/api/config', async () => ({ liffId: process.env.LINE_LIFF_CHANNEL_ID || null }));
+  // oaUrl exists because a Flex button carries only the bare LIFF url: once a card is shared it
+  // cannot be edited, so the card-less landing page is the last place that can still route a
+  // friend to the OA. The follow link is public, and the enabled OA's basic id is already stored.
+  app.get('/api/config', async () => {
+    let oaUrl = process.env.LINE_OA_FRIEND_URL || '';
+    if (!oaUrl) {
+      const found = await selected.database?.pool
+        ?.query('select basic_id from oa_integrations where enabled order by created_at limit 1')
+        .catch(() => null);
+      const basicId = found?.rows?.[0]?.basic_id;
+      if (typeof basicId === 'string' && /^@[A-Za-z0-9._-]{2,50}$/.test(basicId)) oaUrl = `https://line.me/R/ti/p/${basicId}`;
+    }
+    return { liffId: process.env.LINE_LIFF_CHANNEL_ID || null, oaUrl: oaUrl || null };
+  });
   const opsPool = selected.database?.pool;
   if (repo.kind === 'postgres' && opsPool) {
     app.get('/api/ops/delivery-health', { preHandler: authorize('read') }, async (request) => readDeliveryHealth(opsPool, { workspaceId: (request as RequestWithUser).user!.workspaceId }));
