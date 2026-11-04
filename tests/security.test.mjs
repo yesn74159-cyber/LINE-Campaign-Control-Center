@@ -86,3 +86,33 @@ test('LINE signature rejects tampering and deduplicates accepted events', async 
   const customers = await request('/api/customers');
   assert.equal(customers.body.customers.some((customer) => customer.lineUserKey === userId && customer.optIn), true);
 });
+
+test('an operator can record an opt-out, and only the customer can undo it', async () => {
+  const sign = (raw) => createHmac('sha256', 'security-test-secret').update(raw).digest('base64');
+  const follow = (userId, event) => {
+    const raw = JSON.stringify({ events: [{ webhookEventId: event, type: 'follow', source: { userId } }] });
+    return request('/api/webhooks/line/oa-staging-primary', { method: 'POST', headers: { 'content-type': 'application/json', 'x-line-signature': sign(raw) }, payload: raw });
+  };
+  const userId = `U-optout-${Date.now()}`;
+  await follow(userId, `optout-follow-${Date.now()}`);
+  const listed = (await request('/api/customers')).body.customers.find((customer) => customer.lineUserKey === userId);
+  assert.ok(listed, 'the follow event must create the customer before the opt-out test');
+
+  const optedOut = await request(`/api/customers/${listed.id}/opt-out`, { method: 'POST' });
+  assert.equal(optedOut.response.statusCode, 200);
+  assert.equal(optedOut.body.optIn, false);
+  assert.equal(optedOut.body.optOutSource, 'operator');
+  assert.ok(optedOut.body.blockedAt && optedOut.body.optOutAt);
+  const afterOptOut = (await request('/api/customers')).body.customers.find((customer) => customer.id === listed.id);
+  assert.equal(afterOptOut.optIn, false);
+  assert.equal(afterOptOut.optOutSource, 'operator');
+  assert.equal((await request('/api/audit')).body.events.some((event) => event.action === 'CUSTOMER_OPT_OUT' && event.target === listed.id), true);
+  assert.equal((await request('/api/customers/does-not-exist/opt-out', { method: 'POST' })).response.statusCode, 404);
+
+  // The opt-out is a stop signal, not a toggle: consent comes back only from the customer's own follow.
+  await follow(userId, `optout-refollow-${Date.now()}`);
+  const afterRefollow = (await request('/api/customers')).body.customers.find((customer) => customer.id === listed.id);
+  assert.equal(afterRefollow.optIn, true);
+  assert.equal(afterRefollow.blockedAt, undefined);
+  assert.equal(afterRefollow.optOutSource, undefined);
+});

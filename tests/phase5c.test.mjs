@@ -252,8 +252,9 @@ test('channel verification is audited only on the first transition and consent S
   assert.equal(second.calls.some(call => call.kind === 'client' && call.sql.includes('OA_CHANNEL_VERIFIED')), false);
 
   const repository = readFileSync(new URL('../apps/api/src/repository.ts', import.meta.url), 'utf8');
-  assert.match(repository, /insert into customers \(workspace_id, provider_id, line_user_key, opt_in, blocked_at\) values \(\$1,\$2,\$3,false,now\(\)\)/);
-  assert.match(repository, /do update set opt_in=false, blocked_at=now\(\)/);
+  assert.match(repository, /insert into customers \(workspace_id, provider_id, line_user_key, opt_in, blocked_at, opt_out_at, opt_out_source\) values \(\$1,\$2,\$3,false,now\(\),now\(\),'line_unfollow'\)/);
+  assert.match(repository, /do update set opt_in=false, blocked_at=now\(\), opt_out_at=now\(\), opt_out_source='line_unfollow'/);
+  assert.match(repository, /do update set opt_in=true, blocked_at=null, opt_out_at=null, opt_out_source=null/, 'a follow is the only thing that clears an opt-out');
 
   const server = readFileSync(new URL('../apps/api/src/server.ts', import.meta.url), 'utf8');
   assert.match(server, /registerLineWebhookRoutes\(app/);

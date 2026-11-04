@@ -35,6 +35,8 @@ export interface Customer {
   displayName?: string;
   optIn: boolean;
   blockedAt?: string;
+  optOutAt?: string;
+  optOutSource?: string;
 }
 
 export interface OaIntegration {

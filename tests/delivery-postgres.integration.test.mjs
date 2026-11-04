@@ -228,6 +228,32 @@ test('a monthly counter left over from a previous month is reset before the firs
   );
 });
 
+test('an opt-out recorded by an operator removes the customer from the next outbox build', async (t) => {
+  if (skipWithoutDatabase(t)) return;
+  const tenant = await seedTenant(pool, `o_${Date.now()}`);
+  const changingUserId = `U${'d'.repeat(32)}`;
+  const customerId = (await pool.query("insert into customers(workspace_id,provider_id,line_user_key,opt_in) values ($1,'qa-provider',$2,true) returning id", [tenant.workspaceId, changingUserId])).rows[0].id;
+
+  const updated = await repository.optOutCustomer(customerId, tenant.workspaceId, 'qa@delivery.invalid');
+  assert.equal(updated.optIn, false);
+  assert.equal(updated.optOutSource, 'operator');
+  assert.ok(updated.blockedAt && updated.optOutAt, 'an opt-out must carry the block reason and its timestamp');
+  await assert.rejects(() => repository.optOutCustomer(customerId, tenant.secondWorkspaceId, 'qa@delivery.invalid'), /customer not found/);
+  assert.equal((await pool.query("select count(*)::int as count from audit_log where workspace_id=$1 and action='CUSTOMER_OPT_OUT'", [tenant.workspaceId])).rows[0].count, 1);
+  assert.equal((await repository.listCustomers(tenant.workspaceId)).find((item) => item.id === customerId).optOutSource, 'operator');
+
+  const now = new Date();
+  const job = await createScheduledJob(tenant, now);
+  const captured = [];
+  const outcome = await runWorkerOnce(repository, {
+    kind: 'mock',
+    async send(input) { captured.push(input.delivery.recipientKey); return { dryRun: true, outbound: false, idempotencyKey: input.delivery.lineRetryKey, providerStatus: 200 }; }
+  }, { jobId: job.id, workerId: 'qa-worker-optout', now });
+  assert.equal(outcome.status, 'completed');
+  assert.equal(captured.length, 3, 'the operator opt-out must not be delivered to');
+  assert.ok(!captured.includes(changingUserId));
+});
+
 test('live adapter contract resolves the vault token and sends once through a fake HTTP transport', async (t) => {
   if (skipWithoutDatabase(t)) return;
   const tenant = await seedTenant(pool, `l_${Date.now()}`);
