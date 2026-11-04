@@ -38,8 +38,11 @@ nav { margin-top: 26px; display: grid; gap: 5px; } nav button { border: 0; backg
 .oa-form input { min-width:0; }
 .form-note { margin:0; color:#789187; font-size:12px; }
 .oa-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.oa-limits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)) auto; gap:10px; align-items:end; margin-top:12px; padding-top:12px; border-top:1px solid #eef5f1; }
+.oa-limits label { display:grid; gap:6px; color:#668278; font-size:12px; font-weight:700; }
+.oa-limits input { min-width:0; }
 .danger-btn { border:1px solid #f1b8b8; background:#fff3f3; color:#a73535; border-radius:10px; padding:9px 12px; cursor:pointer; }
-@media (max-width: 760px) { .oa-form { grid-template-columns:1fr; } .approval-strip { align-items:flex-start; flex-direction:column; } }
+@media (max-width: 760px) { .oa-form, .oa-limits { grid-template-columns:1fr; } .approval-strip { align-items:flex-start; flex-direction:column; } }
 
 /* Phase 2 Workspace settings — retains the current responsive Admin shell */
 .tenant-form { display: grid; max-width: 540px; gap: 9px; margin: 18px 0 0; }

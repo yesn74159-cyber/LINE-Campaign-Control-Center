@@ -18,6 +18,7 @@ export interface Campaign {
   active: boolean;
   latestRevision?: number;
   flexJson?: Record<string, unknown>;
+  killSwitch?: boolean;
 }
 
 export interface AdminUser {
@@ -50,6 +51,8 @@ export interface OaIntegration {
   connectionStatus: OaConnectionStatus;
   credentialStatus: CredentialStatus;
   quotaPerMinute: number;
+  monthlyQuota?: number;
+  monthlyUsed?: number;
   killSwitch: boolean;
   killSwitchReason?: string;
 }

@@ -116,3 +116,44 @@ test('an operator can record an opt-out, and only the customer can undo it', asy
   assert.equal(afterRefollow.blockedAt, undefined);
   assert.equal(afterRefollow.optOutSource, undefined);
 });
+
+test('OA limits are per-field, range-checked, and audited', async () => {
+  const oas = (await request('/api/oas')).body.oas;
+  const oa = oas.find((item) => item.enabled) || oas[0];
+
+  const empty = await request(`/api/oas/${oa.id}/limits`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({}) });
+  assert.equal(empty.response.statusCode, 400, 'an empty patch must not report success');
+  const outOfRange = await request(`/api/oas/${oa.id}/limits`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ quotaPerMinute: 0 }) });
+  assert.equal(outOfRange.response.statusCode, 400);
+
+  const monthly = await request(`/api/oas/${oa.id}/limits`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ monthlyQuota: 900 }) });
+  assert.equal(monthly.response.statusCode, 200, JSON.stringify(monthly.body));
+  assert.equal(monthly.body.monthlyQuota, 900);
+
+  // A partial patch must leave the field it did not mention alone.
+  const perMinute = await request(`/api/oas/${oa.id}/limits`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ quotaPerMinute: 42 }) });
+  assert.equal(perMinute.response.statusCode, 200, JSON.stringify(perMinute.body));
+  assert.equal(perMinute.body.quotaPerMinute, 42);
+  assert.equal(perMinute.body.monthlyQuota, 900);
+
+  const listed = (await request('/api/oas')).body.oas.find((item) => item.id === oa.id);
+  assert.equal(listed.quotaPerMinute, 42);
+  assert.equal(listed.monthlyQuota, 900);
+  assert.equal((await request('/api/audit')).body.events.some((event) => event.action === 'OA_LIMITS_CHANGED' && event.target === oa.id), true);
+});
+
+test('a campaign kill switch shows up on the campaign list and blocks scheduling', async () => {
+  const stop = await request('/api/campaigns/welcome/kill-switch', { method: 'POST', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ enabled: true, reason: 'security test stop' }) });
+  assert.equal(stop.response.statusCode, 200, JSON.stringify(stop.body));
+  try {
+    const listed = (await request('/api/campaigns')).body.campaigns.find((item) => item.id === 'welcome');
+    assert.equal(listed.killSwitch, true);
+    assert.equal(listed.active, true, 'stopping a campaign must not hide it from the library');
+    assert.equal(stop.body.canSchedule, false);
+    assert.ok(stop.body.blockers.includes('Campaign kill switch is active'));
+  } finally {
+    await request('/api/campaigns/welcome/kill-switch', { method: 'POST', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ enabled: false, reason: 'security test cleanup' }) });
+  }
+  const resumed = (await request('/api/campaigns')).body.campaigns.find((item) => item.id === 'welcome');
+  assert.equal(resumed.killSwitch, false);
+});

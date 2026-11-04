@@ -254,6 +254,32 @@ test('an opt-out recorded by an operator removes the customer from the next outb
   assert.ok(!captured.includes(changingUserId));
 });
 
+test('OA limits and campaign kill switches round-trip through PostgreSQL without clearing the other field', async (t) => {
+  if (skipWithoutDatabase(t)) return;
+  const tenant = await seedTenant(pool, `limits_${Date.now()}`);
+
+  const monthly = await repository.setOaLimits(tenant.oaId, tenant.workspaceId, { monthlyQuota: 250 }, 'qa@delivery.invalid');
+  assert.equal(monthly.monthlyQuota, 250);
+  assert.equal(monthly.quotaPerMinute, 5, 'a partial patch keeps the per-minute cap');
+  assert.equal(monthly.monthlyUsed, 0);
+
+  const perMinute = await repository.setOaLimits(tenant.oaId, tenant.workspaceId, { quotaPerMinute: 30 }, 'qa@delivery.invalid');
+  assert.equal(perMinute.quotaPerMinute, 30);
+  assert.equal(perMinute.monthlyQuota, 250, 'a partial patch keeps the monthly cap');
+  await assert.rejects(() => repository.setOaLimits(tenant.oaId, tenant.secondWorkspaceId, { monthlyQuota: 1 }, 'qa@delivery.invalid'), /not found/);
+  assert.equal((await repository.listOas(tenant.workspaceId)).find((item) => item.id === tenant.oaId).monthlyQuota, 250);
+  assert.equal((await pool.query("select count(*)::int as count from audit_log where workspace_id=$1 and action='OA_LIMITS_CHANGED'", [tenant.workspaceId])).rows[0].count, 2);
+
+  const stopped = await repository.setCampaignKillSwitch('welcome', tenant.workspaceId, true, 'qa stop', 'qa@delivery.invalid');
+  assert.equal(stopped.campaignKillSwitch, true);
+  assert.equal(stopped.canSchedule, false);
+  const listed = (await repository.listCampaigns(tenant.workspaceId)).find((item) => item.id === 'welcome');
+  assert.equal(listed.killSwitch, true);
+  assert.equal(listed.active, true, 'a stopped campaign stays visible in the library');
+  await repository.setCampaignKillSwitch('welcome', tenant.workspaceId, false, 'qa resume', 'qa@delivery.invalid');
+  assert.equal((await repository.listCampaigns(tenant.workspaceId)).find((item) => item.id === 'welcome').killSwitch, false);
+});
+
 test('live adapter contract resolves the vault token and sends once through a fake HTTP transport', async (t) => {
   if (skipWithoutDatabase(t)) return;
   const tenant = await seedTenant(pool, `l_${Date.now()}`);
