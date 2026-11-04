@@ -1,6 +1,6 @@
 {
   "type": "flex",
-  "altText": "{{TITLE}} • เปิดผ่าน LINE MINI App",
+  "altText": "{{TITLE}} • กดปุ่มแล้วเพิ่มเพื่อน LINE OA",
   "contents": {
     "type": "bubble",
     "size": "kilo",
@@ -44,7 +44,7 @@
             },
             {
               "type": "text",
-              "text": "LINE MINI App • Developing",
+              "text": "เพิ่มเพื่อน LINE OA • ระบบกำลังพัฒนา",
               "size": "xs",
               "color": "#CCCCCC",
               "align": "center",
@@ -73,7 +73,7 @@
               "aspectRatio": "16:9",
               "action": {
                 "type": "uri",
-                "label": "เปิดกิจกรรม",
+                "label": "เปิดใน LINE",
                 "uri": "{{LIFF_URL}}"
               }
             },

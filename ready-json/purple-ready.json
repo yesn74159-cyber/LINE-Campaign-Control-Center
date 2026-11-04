@@ -44,7 +44,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "MINI App • Developing",
+                  "text": "เพิ่มเพื่อน LINE OA",
                   "size": "xxs",
                   "color": "#EEEFFF"
                 }
@@ -88,7 +88,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "MINI App",
+                  "text": "หน้าแชร์",
                   "size": "xxs",
                   "color": "#5C6BC0",
                   "align": "center",
@@ -202,7 +202,7 @@
             },
             {
               "type": "text",
-              "text": "ติดตามกิจกรรมผ่าน LINE MINI App ตรวจสถานะเพื่อน LINE OA และแชร์ต่อให้เพื่อนด้วยตนเอง • ระบบทดสอบ",
+              "text": "เปิดใน LINE เพื่อแชร์ต่อให้เพื่อน และตรวจสถานะเพื่อน LINE OA • ระบบทดสอบ",
               "size": "sm",
               "color": "#555555",
               "wrap": true,

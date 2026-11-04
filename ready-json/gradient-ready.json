@@ -1,6 +1,6 @@
 {
   "type": "flex",
-  "altText": "กิจกรรมพิเศษ LINE OA • เปิดผ่าน LINE MINI App",
+  "altText": "กิจกรรมพิเศษ LINE OA • กดปุ่มแล้วเพิ่มเพื่อน LINE OA",
   "contents": {
     "type": "bubble",
     "size": "mega",
@@ -26,7 +26,7 @@
         },
         {
           "type": "text",
-          "text": "ตัวอย่างข้อความกิจกรรมสำหรับทดสอบ LINE MINI App • ยังไม่มีส่วนลดหรือรางวัลจริง",
+          "text": "ตัวอย่างข้อความกิจกรรมสำหรับทดสอบ • ยังไม่มีส่วนลดหรือรางวัลจริง",
           "size": "sm",
           "color": "#FFFFFF",
           "margin": "md",
@@ -54,7 +54,7 @@
               "type": "button",
               "action": {
                 "type": "uri",
-                "label": "เปิดกิจกรรม",
+                "label": "เปิดใน LINE",
                 "uri": "https://miniapp.line.me/2012104116-08P8b7g6?campaign=gradient&utm_source=owner_share"
               },
               "style": "primary",

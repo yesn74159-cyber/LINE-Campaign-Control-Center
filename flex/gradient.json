@@ -1,6 +1,6 @@
 {
   "type": "flex",
-  "altText": "{{TITLE}} • เปิดผ่าน LINE MINI App",
+  "altText": "{{TITLE}} • กดปุ่มแล้วเพิ่มเพื่อน LINE OA",
   "contents": {
     "type": "bubble",
     "size": "mega",

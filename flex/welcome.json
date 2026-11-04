@@ -1,9 +1,9 @@
 {
   "type": "flex",
-  "altText": "ยินดีต้อนรับ — เปิดกิจกรรมผ่าน LINE MINI App",
+  "altText": "ยินดีต้อนรับ — เพิ่มเพื่อน LINE OA เพื่อรับกิจกรรม",
   "contents": {
     "type": "bubble",
-    "hero": {"type": "image", "url": "{{IMAGE_URL}}", "size": "full", "aspectRatio": "20:13", "aspectMode": "cover", "action": {"type": "uri", "label": "เปิดกิจกรรม", "uri": "{{LIFF_URL}}"}},
+    "hero": {"type": "image", "url": "{{IMAGE_URL}}", "size": "full", "aspectRatio": "20:13", "aspectMode": "cover", "action": {"type": "uri", "label": "เพิ่มเพื่อนที่ LINE OA", "uri": "{{LIFF_URL}}"}},
     "body": {"type": "box", "layout": "vertical", "spacing": "md", "contents": [
       {"type": "text", "text": "{{TITLE}}", "weight": "bold", "size": "xl", "wrap": true},
       {"type": "text", "text": "{{DESCRIPTION}}", "size": "sm", "wrap": true, "color": "#567069"}

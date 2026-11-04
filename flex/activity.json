@@ -1,5 +1,5 @@
 {
-  "type": "flex", "altText": "กิจกรรมใหม่ — เปิดใน LINE MINI App",
+  "type": "flex", "altText": "กิจกรรมใหม่ — เปิดใน LINE แล้วแชร์ต่อ",
   "contents": {"type": "bubble",
     "hero": {"type": "image", "url": "{{IMAGE_URL}}", "size": "full", "aspectRatio": "20:13", "aspectMode": "cover"},
     "body": {"type": "box", "layout": "vertical", "spacing": "md", "contents": [

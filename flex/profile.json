@@ -1,6 +1,6 @@
 {
   "type": "flex",
-  "altText": "{{TITLE}} — เพิ่มเพื่อน OA และเปิด LINE MINI App",
+  "altText": "{{TITLE}} — เพิ่มเพื่อน LINE OA",
   "contents": {
     "type": "bubble",
     "size": "kilo",
@@ -102,7 +102,7 @@
               "contents": [
                 {
                   "type": "text",
-                  "text": "MINI App",
+                  "text": "เปิดใน LINE",
                   "size": "sm",
                   "color": "#0F8F48",
                   "weight": "bold",
@@ -110,7 +110,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "ดูแคมเปญ",
+                  "text": "แชร์ต่อ",
                   "size": "xxs",
                   "color": "#888888",
                   "align": "center",
