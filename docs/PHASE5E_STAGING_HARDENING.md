@@ -130,6 +130,31 @@ docker exec -i line-ccc-postgres-staging pg_restore -U line_ccc -d line_ccc_rest
 docker exec line-ccc-postgres-staging dropdb -U line_ccc line_ccc_restore_drill
 ```
 
+## Runbook: nightly automatic backup (on-host)
+
+`deploy/nightly-backup.sh` คือสูตร container ข้างบน บวกการตรวจรับไฟล์จริง ส่วน `deploy/install-backup-cron.sh` ลง cron ให้แบบ idempotent (รันซ้ำแล้วไม่เพิ่มบรรทัดซ้ำ)
+
+```bash
+# บน VM ให้รันด้วย user ที่ถือ stack (ubuntu) — ไม่ใช่ root เพราะต้องใช้สิทธิ์ docker group
+cd /srv/line-ccc-staging
+bash deploy/install-backup-cron.sh --run-now
+```
+
+สิ่งที่ script ทำและตรวจก่อนเก็บไฟล์:
+
+1. `pg_dump` รันใน container ผ่าน unix socket ของมันเอง — ไม่มี password ใน argv หรือในไฟล์ใด ๆ
+2. magic bytes ต้องเป็น `PGDMP` และขนาดต้องเกิน `MIN_BYTES` (ค่าเริ่มต้น 8192; dump จริงของ staging ราว 94–110 KB)
+3. คัดลอก archive เข้า container ด้วย `docker compose cp` แล้วให้ `pg_restore --list` อ่านจริงใน container
+4. นับจำนวน `TABLE` ใน table of contents ต้องอย่างน้อย `MIN_TABLES` (ค่าเริ่มต้น 5; staging มี 26 ตาราง) นี่คือด่านที่จับกรณี dump จากฐานข้อมูลว่างหรือผิดฐานข้อมูล ซึ่งผ่านทุกการตรวจเชิงโครงสร้าง
+5. เขียน `<file>.sha256` แล้ว `sha256sum -c --strict` ก่อนเปลี่ยนสถานะเป็นไฟล์ทางการ พร้อมบันทึกแถว `OK`/`FAIL` ลง `backups/backup.log`
+6. เก็บไฟล์ล่าสุด `KEEP` ชุด (ค่าเริ่มต้น 14) เฉพาะ prefix `nightly-` — dump ที่ตั้งชื่อเองอย่าง `pre014-*`, `drill-*` จะไม่ถูกลบ
+
+กำหนดเวลาเป็น `30 20 * * *` (UTC) คือ 03:30 น. เวลาไทย แก้ได้ด้วย `SCHEDULE="0 4 * * *" bash deploy/install-backup-cron.sh`
+
+ข้อจำกัดที่ต้องพูดตรง ๆ: **นี่คือ backup บนเครื่องเดียว** กันกรณี deploy พังหรือตารางหาย แต่ไม่กันกรณี VM หาย การย้ายสำเนาออกนอก VM ยังเป็นขั้นตอนแยก (`docker compose cp` หรือ scp จาก `backups/`) และยังไม่ตั้งอัตโนมัติ
+
+ซ้อมบนเครื่องผู้พัฒนา 2026-11-04 ด้วย postgres:16-alpine และฐานข้อมูล 5 ตาราง: กรณีผ่านได้ dump 4,508 bytes (tables=5, sha256 OK) และเมื่อ restore เข้า DB ใหม่แล้วนับแถวได้ 50/200 ตรงต้นฉบับ ส่วนกรณีไม่ผ่านตั้ง `MIN_TABLES=50` กับ service ที่ไม่ทำงาน แล้วไม่มีไฟล์ `.partial` ค้างบน host ไม่มี scratch ค้างใน container; rotation แบบ `KEEP=2` เหลือ 2 ไฟล์ล่าสุดโดย `pre014-*` ยังอยู่ครบ; installer เพิ่ม/คง/แทนที่บรรทัดได้ถูกต้องและเก็บ entry อื่นไว้ครบ; และปฏิเสธก่อนแตะ crontab เมื่อ docker หรือ script ขาด
+
 ## Acceptance checklist
 
 - [x] CI มี job สำหรับ PG ครบ (line-login, referral, webhook, delivery, tenant, phase4a, phase4b, integration)
@@ -144,6 +169,8 @@ docker exec line-ccc-postgres-staging dropdb -U line_ccc line_ccc_restore_drill
 - [x] ทดสอบ compose/Caddy บนเครื่องที่มี Docker — build 3 images, migrations 001–012 บน DB ว่าง, seed 7 campaigns, Caddy HTTPS 200, smoke 16/16 (login/ops/audit/logout), worker 0 restart (2026-11-01)
 - [x] cloud read-only audit กับ staging จริง (2026-11-01): migrations 001–012 ครบ, 25 ตารางครบ ไม่มีแปลกปลอม, RLS เปิดเฉพาะ 3 ตาราง line_customer_* แบบ 0 policy, role line_ccc เป็น superuser+BYPASSRLS (posture เดิมที่ Tier A/B จะ tighten), FK ไร้ leading index 25 ตัว
 - [x] backup/restore drill บน staging จริง (2026-11-01): dump 93,599 bytes ผ่าน PGDMP+sha256, restore เข้า drill DB แล้วนับแถวตรงกับ live เป๊ะ ก่อน drop
+- [x] nightly backup script + cron installer (2026-11-04): ซ้อมครบทั้ง pass/fail/rotation/restore บน Docker ในเครื่อง ตาม runbook ข้างบน
+- [ ] ยังไม่ได้ติดตั้ง cron บน VM — ต้องรัน `bash deploy/install-backup-cron.sh --run-now` ที่ `/srv/line-ccc-staging` ด้วย user `ubuntu`
 
 ## Limits ที่ยังค้าง
 
