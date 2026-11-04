@@ -16,7 +16,10 @@ set -euo pipefail
 DEPLOY_DIR="${DEPLOY_DIR:-/srv/line-ccc-staging}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.staging.yml}"
 ENV_FILE="${ENV_FILE:-.env.staging}"
-SERVICE="${SERVICE:-postgres}"
+# Postgres work goes through `docker exec` on the fixed container_name rather than
+# `docker compose exec`: the repo is not mounted into the containers, and `compose exec
+# postgres` has reported "service postgres is not running" on this host before.
+PG_CONTAINER="${PG_CONTAINER:-line-ccc-postgres-staging}"
 PROPOSAL="db/proposals/015_tier_c_app_role.sql"
 VERIFY="db/proposals/verify-tier-c.sql"
 MAX_DUMP_AGE_HOURS="${MAX_DUMP_AGE_HOURS:-26}"
@@ -28,6 +31,7 @@ cd "$DEPLOY_DIR" 2> /dev/null || { echo "refusing: $DEPLOY_DIR does not exist (o
 [ -f "$ENV_FILE" ] || { echo "missing $ENV_FILE" >&2; exit 1; }
 
 compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
+pgsh() { docker exec -i "$PG_CONTAINER" sh -c "$1"; }
 
 # Gate 1: a dump taken today must exist, off the label the nightly job writes.
 dump="$(ls -1t backups/nightly-*.dump 2> /dev/null | head -1 || true)"
@@ -44,23 +48,21 @@ fi
 echo "gate: restore point $(basename "$dump") (${age_hours}h old)"
 
 # Gate 2: the database must answer before anything is changed.
-compose exec -T "$SERVICE" sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null \
+pgsh 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null \
   || { echo "refusing: the postgres container is not accepting connections" >&2; exit 1; }
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 report="backups/tier-c-apply-$stamp.txt"
-compose cp "$PROPOSAL" "$SERVICE:/tmp/015.sql" >/dev/null
-compose cp "$VERIFY" "$SERVICE:/tmp/verify-tier-c.sql" >/dev/null
+docker cp "$PROPOSAL" "$PG_CONTAINER:/tmp/015.sql" >/dev/null
+docker cp "$VERIFY" "$PG_CONTAINER:/tmp/verify-tier-c.sql" >/dev/null
 
 echo "applying $PROPOSAL as one transaction ..."
-compose exec -T "$SERVICE" sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 --single-transaction -f /tmp/015.sql' \
+pgsh 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 --single-transaction -f /tmp/015.sql' \
   > "$report" 2>&1 \
   || { echo "FAILED - the transaction rolled back, nothing was changed. See $report:" >&2; tail -20 "$report" >&2; exit 1; }
 
 echo "verifying ..."
-compose exec -T "$SERVICE" sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -f /tmp/verify-tier-c.sql' >> "$report" 2>&1
+pgsh 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -f /tmp/verify-tier-c.sql' >> "$report" 2>&1
 
 # The two lines that decide whether Tier C landed.
 if ! grep -q 'policies created for line_ccc_app' "$report" && ! grep -q 'tables_with_app_policy' "$report"; then
@@ -77,9 +79,15 @@ if grep -qE 'ERROR|FATAL' "$report"; then
 fi
 
 echo
-echo "The runtime still connects as the owner. Next step (its own approval, inside the window):"
-echo "  CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh"
-echo "Set the role password in that step with:"
-echo "  docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec -T $SERVICE \\"
-echo "    sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"\\\\password line_ccc_app\"'"
+echo "The runtime still connects as the owner. Two steps remain, each with its own confirmation:"
+echo
+echo "1) Set the role password - needs a real terminal, so run it from an interactive ssh session"
+echo "   (psql reads it with hidden input; -T / no-tty cannot answer the prompt):"
+echo "     ssh -i <key> ubuntu@13.212.244.219"
+echo "     cd /srv/line-ccc-staging && docker exec -it $PG_CONTAINER \\"
+echo "       psql -U line_ccc -d line_campaign_ccc -c '\\password line_ccc_app'"
+echo
+echo "2) Switch the runtime (its own approval, inside the window):"
+echo "     CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh"
+echo
 echo "Report kept at $report"

@@ -158,25 +158,30 @@ backend ที่ตกอยู่ในสภาพนี้ **ไม่ crash
 
 ลำดับการ apply บน staging (อนุมัติแล้ว 2026-11-04 — ผู้ดำเนินการคือเจ้าของระบบ รันเองบน VM ด้วยบัญชี `ubuntu`, หน้าต่างเวลา **2026-11-05 10:00–10:45 ICT / 03:00–03:45 UTC**)
 
-ก่อนเข้าหน้าต่าง (read-only ทั้งคู่ — คำสั่งที่สามใช้ heredoc เพื่อไม่ต้องมี single quote ซ้อนใน `sh -c` และต่อ socket ใน container ที่ trust อยู่แล้ว จึงไม่ต้องใช้พาสเวิร์ด):
+ก่อนเข้าหน้าต่าง (read-only ทั้งหมด — ใช้ `docker exec` เพราะ repo ไม่ได้ mount เข้า container และ heredoc ไม่ต้องมี single quote ซ้อน; socket ใน container เป็น trust จึงไม่ต้องใช้พาสเวิร์ด):
 ```bash
 tail -3 /srv/line-ccc-staging/backups/backup.log        # ต้องเห็น "nightly OK … tables=27" ของรอบ 03:30 ICT วันนี้
 ls -1t /srv/line-ccc-staging/backups/nightly-*.dump | head -1
-cd /srv/line-ccc-staging && docker compose -f docker-compose.staging.yml --env-file .env.staging \
-  exec -T postgres psql -U line_ccc -d line_campaign_ccc -X -A <<'SQL'
+docker exec -i line-ccc-postgres-staging psql -U line_ccc -d line_campaign_ccc -X -A <<'SQL'
 select id, status, scheduled_at, available_at
 from scheduler_jobs
 where status in ('QUEUED','PAUSED','CLAIMED','SENDING','RETRYABLE')
 order by available_at nulls last;
 SQL
 ```
-ถ้าคิวงานมีรายการที่ trigger ตรงช่วง 10:00–10:45 ICT ให้ **เลื่อนหน้าต่าง** ไม่ใช่พัก worker (worker หยุดอยู่แล้วระหว่าง `up -d` ในขั้น 4 เท่านั้น)
+ถ้าคิวงานมีรายการที่ trigger ตรงช่วง 10:00–10:45 ICT ให้ **เลื่อนหน้าต่าง** ไม่ใช่พัก worker (worker ถูก recreate เฉพาะขั้น 3 ช่วงเดียว)
 
-ขั้นในหน้าต่าง (แต่ละขั้นรันจาก `/srv/line-ccc-staging`; owner URL ไม่เคยโผล่ใน argv เพราะ psql รันใน container และ `DATABASE_URL` ถูก export ด้วย bash builtin):
+ขั้นในหน้าต่าง (รันจาก `/srv/line-ccc-staging`; owner URL ไม่เคยโผล่ใน argv เพราะ psql รันใน container และ `DATABASE_URL` ถูก export ด้วย bash builtin แล้วส่งต่อแบบ bare `-e DATABASE_URL`):
 
-1. `CONFIRM=TIER-C bash deploy/tier-c-apply.sh` — script refuse เองถ้า dump ล่าสุดเก่ากว่า 26 ชม. หรือ `pg_isready` ไม่ตอบ; apply `015_tier_c_app_role.sql` ด้วย `--single-transaction -v ON_ERROR_STOP=1` แล้วรัน `verify-tier-c.sql` ต่อทันที เก็บทุกอย่างไว้ใน `backups/tier-c-apply-<stamp>.txt` (script ยังไม่แตะ `.env.staging`)
-2. ตั้ง password ของ `line_ccc_app`: `docker compose -f docker-compose.staging.yml --env-file .env.staging exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\password line_ccc_app"'` (interactive — ห้ามพิมพ์พาสเวิร์ดใน command line หรือในแชท)
-3. `CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh` — gate ด้วย unix socket login เป็น app role, เก็บ owner URL ลง `.env.migrate` (600), พิมพ์พาสเวิร์ดที่ prompt, เขียน `DATABASE_URL` ใหม่, `up -d api worker`, ตรวจ `/health` และ **rollback ไฟล์ env เองถ้า api ไม่ healthy**
+1. `CONFIRM=TIER-C bash deploy/tier-c-apply.sh` — script refuse เองถ้า dump ล่าสุดเก่ากว่า 26 ชม. หรือ `pg_isready` ไม่ตอบ; copy ไฟล์เข้า container ด้วย `docker cp` แล้ว apply `015_tier_c_app_role.sql` ด้วย `--single-transaction -v ON_ERROR_STOP=1` ต่อด้วย `verify-tier-c.sql` เก็บทุกอย่างเป็นไฟล์ใน `backups/tier-c-apply-<stamp>.txt` (script ยังไม่แตะ `.env.staging`)
+2. ตั้ง password ของ `line_ccc_app` **ใน session ที่มี terminal จริง** (`psql` ขอพาสเวิร์ดแบบซ่อน ต้องมี tty — `-T`/no-tty ตอบ prompt ไม่ได้):
+   ```bash
+   ssh -i <key> ubuntu@13.212.244.219        # เข้าแบบ interactive ไม่ใช่ ssh -T "..."
+   cd /srv/line-ccc-staging
+   docker exec -it line-ccc-postgres-staging psql -U line_ccc -d line_campaign_ccc -c '\password line_ccc_app'
+   ```
+   ห้ามพิมพ์พาสเวิร์ดใน command line หรือในแชท — หน้านี้ psql ถามเองสองครั้ง
+3. `CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh` — gate ด้วย unix socket login เป็น app role, เก็บ owner URL ลง `.env.migrate` (600), พิมพ์พาสเวิร์ดที่ prompt, เขียน `DATABASE_URL` ใหม่, `up -d api worker`, ตรวจ `/health` ข้างใน api container และ **rollback ไฟล์ env เองถ้า api ไม่ healthy**
 4. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่าน 16/16, `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
 5. งาน migrate ครั้งถัดไปรันผ่าน `bash deploy/staging-migrate.sh migrate` เท่านั้น (และรัน `tier-c-apply.sh` ซ้ำถ้า migration สร้าง table ใหม่ — script พิมพ์เตือนไว้ท้ายรอบ)
 6. ถ้าขั้น 4 พัง: `cp .env.staging.bak-tierc-<stamp> .env.staging && docker compose ... up -d api worker` แล้วค่อยตัดสินใจเรื่อง rollback SQL (ด้านล่าง) — การปล่อย role ไว้พร้อม owner URL กลับคืน เป็น path ที่ข้อมูลไม่กระทบ

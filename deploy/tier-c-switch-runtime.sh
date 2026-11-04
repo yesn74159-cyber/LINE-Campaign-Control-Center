@@ -18,7 +18,10 @@ DEPLOY_DIR="${DEPLOY_DIR:-/srv/line-ccc-staging}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.staging.yml}"
 ENV_FILE="${ENV_FILE:-.env.staging}"
 MIGRATE_ENV="${MIGRATE_ENV:-.env.migrate}"
-SERVICE="${SERVICE:-postgres}"
+# Same reason as in tier-c-apply.sh: the fixed container_name is the route that has been
+# reliable on this host, and neither call needs compose's environment interpolation.
+PG_CONTAINER="${PG_CONTAINER:-line-ccc-postgres-staging}"
+API_CONTAINER="${API_CONTAINER:-line-ccc-api-staging}"
 
 [ "${CONFIRM:-}" = "TIER-C-SWITCH" ] || { echo "refusing: this changes what api/worker connect with. Re-run with CONFIRM=TIER-C-SWITCH" >&2; exit 1; }
 cd "$DEPLOY_DIR" 2> /dev/null || { echo "refusing: $DEPLOY_DIR does not exist (override with DEPLOY_DIR=...)" >&2; exit 1; }
@@ -39,7 +42,7 @@ compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
 
 # The container's own unix socket is trust-authenticated, so this proves the role and its
 # grants exist without needing the password - the password is proved by the health check.
-if ! compose exec -T "$SERVICE" sh -c \
+if ! docker exec -i "$PG_CONTAINER" sh -c \
       'psql -h /var/run/postgresql -U line_ccc_app -d "$POSTGRES_DB" -X -Atc "select count(*) from campaigns"' | grep -qE '^[0-9]+$'; then
   echo "refusing: cannot connect as line_ccc_app or read campaigns over the container socket." >&2
   echo "        Run deploy/tier-c-apply.sh first (it creates the role, grants and policies)." >&2
@@ -90,14 +93,13 @@ echo "waiting for api to come up, then probing /health inside the container ..."
 sleep 12
 # `if ! sleep 12 && compose exec ...` would parse as (! sleep) && exec and always look
 # healthy, because a successful sleep short-circuits the AND-list before the probe runs.
-if ! compose exec -T api node -e \
+if ! docker exec -i "$API_CONTAINER" node -e \
   "fetch('http://127.0.0.1:8787/health').then(r => r.ok ? console.log(r.status) : process.exit(1)).catch(() => process.exit(1))" >/dev/null 2>&1; then
   echo "FAILED: api is not healthy after the switch. Rolling the env file back ..."
   cp -p "$ENV_FILE.bak-tierc-$stamp" "$ENV_FILE"
   compose up -d api worker >/dev/null
-  echo "rolled back to the owner URL. Check the app role password with:"
-  echo "  docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec $SERVICE \\"
-  echo "    sh -c 'psql -h 127.0.0.1 -U line_ccc_app -d \"\$POSTGRES_DB\" -W -Atc \"select 1\"'"
+  echo "rolled back to the owner URL. To test the app role password over TCP, run:"
+  echo "  docker exec -it $PG_CONTAINER psql -h 127.0.0.1 -U line_ccc_app -d line_campaign_ccc -W -Atc 'select 1'"
   compose logs --tail 20 api >&2 || true
   exit 1
 fi

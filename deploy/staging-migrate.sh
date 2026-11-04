@@ -55,7 +55,5 @@ echo
 echo "If that applied a migration that ADDS A TABLE, Tier C is now incomplete:"
 echo "line_ccc_app gets its DML grant from ALTER DEFAULT PRIVILEGES, but nothing creates"
 echo "its <table>_app_access policy - and a table with RLS and no policy reads as empty."
-echo "Re-run the proposal (it is idempotent) and check for drift:"
+echo "Re-run the proposal (it is idempotent, and it runs the drift verifier for you):"
 echo "  CONFIRM=TIER-C bash deploy/tier-c-apply.sh"
-echo "  docker compose -f $COMPOSE_FILE --env-file $ENV_FILE exec -T postgres \\"
-echo "    sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -X -f /tmp/verify-tier-c.sql'"
