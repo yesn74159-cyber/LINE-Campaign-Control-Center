@@ -170,7 +170,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\offsite-backup.ps1
 - ไฟล์เป็น ASCII ทั้งหมดโดยเจตนา: Windows PowerShell 5.1 อ่าน `.ps1` ที่ไม่มี BOM เป็น ANSI ตัวอักษร non-ASCII ตัวเดียวจะทำให้ string ทั้งไฟล์เพี้ยน
 - ข้อจำกัดที่ยังเหลือ: เครื่อง workstation เป็นสำเนานอก VM จุดเดียว (เครื่องหาย = หมด) และการรันยังเป็นการกดมือ ไม่ใช่ auto — ถ้าจะ auto ให้ลง Task Scheduler ที่เครื่องนี้ ไม่ใช่ที่ VM
 
-ตรวจรับของ script นี้ (2026-11-04, ในเครื่อง): parse ผ่าน, `Test-Dump` ให้ `True` กับคู่ sidecar จริงที่ VM สร้าง (`post013-…dump`), ให้ `False` เมื่อ flip 1 byte และเมื่อ sidecar หาย, ส่วน rotation ลบ 2 คู่เก่าสุดจริงและคง `pre014-*` ไว้, guard ทั้งสอง (key pair ไม่มี / host ติดไม่ได้) ล้มเหลวพร้อมข้อความที่ระบุเหตุ ยังไม่ถึงขั้น scp จาก VM จริง
+ตรวจรับในเครื่องก่อนใช้ (2026-11-04): parse ผ่าน, `Test-Dump` ให้ `True` กับคู่ sidecar จริงที่ VM สร้าง (`post013-…dump`), ให้ `False` เมื่อ flip 1 byte และเมื่อ sidecar หาย, ส่วน rotation ลบ 2 คู่เก่าสุดจริงและคง `pre014-*` ไว้, guard ทั้งสอง (key pair ไม่มี / host ติดไม่ได้) ล้มเหลวพร้อมข้อความที่ระบุเหตุ
+
+รันจริงกับ VM (2026-11-04): `scp` สองไฟล์ลงมา, script พิมพ์ `verified: 123491 bytes, sha256 matches the host sidecar` แล้วแสดง `backup.log` ของ host ต่อท้าย และ **ซ้อม restore สำเนาที่ลงมาแล้ว** ใน postgres:16-alpine ชั่วคราว: `pg_restore` exit 0, stderr 0 บรรทัด, ได้ 27 ตาราง, migration ledger `001…014` ครบ, `campaigns=7`, `campaign_revisions=19`, `line_customers=1`, `outbox_deliveries=4`, `audit_log=117`, `webhook_events=4`, `scheduler_jobs=11` จากนั้นลบ container ทิ้ง ตัวเลขชุดนี้คือ backup record ของ dump `nightly-20261104T113014Z` ที่ drill ครั้งต่อไปต้องนับให้ตรง
+
+ข้อสังเกตจากการซ้อม: `campaign_revisions` มี 11 แถวที่ flex_json ยังพูดคำว่า MINI App และทั้งหมดคือ `welcome` revision 2–12 สถานะ `DRAFT` (ประวัติทุกครั้งที่เคยกดบันทึกเวอร์ชัน) แถวที่ถูกส่งจริงคือ revision ล่าสุด ซึ่งไม่มีคำนั้นแล้ว จึงไม่ใช่บัก แต่เป็นเหตุผลที่ห้าม "ย้อนไปใช้ revision เก่า" โดยไม่อ่าน copy ก่อน และจะไม่ลบแถวเหล่านี้ถ้าไม่ได้ระบุ id มาเป็นชุด
 
 ## Acceptance checklist
 
@@ -188,6 +192,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\offsite-backup.ps1
 - [x] backup/restore drill บน staging จริง (2026-11-01): dump 93,599 bytes ผ่าน PGDMP+sha256, restore เข้า drill DB แล้วนับแถวตรงกับ live เป๊ะ ก่อน drop
 - [x] nightly backup script + cron installer (2026-11-04): ซ้อมครบทั้ง pass/fail/rotation/restore บน Docker ในเครื่อง ตาม runbook ข้างบน
 - [x] cron ติดตั้งจริงบน staging VM (2026-11-04, `a1e59c5`): `30 20 * * *`, proof run เขียน `nightly-20261104T113014Z.dump` = 123,491 bytes, log `nightly OK bytes=123491 tables=27`, `sha256sum -c --strict` = OK, `systemctl is-active/is-enabled cron` = active/enabled, dump เก่า `pre014-*`/`post013-*` ยังอยู่ครบ
+- [x] สำเนาออกนอก VM ด้วย `deploy/offsite-backup.ps1` (2026-11-04, `72164ff`): ดึง dump + sidecar, ตรวจ hash ตรง, และซ้อม restore สำเนานั้นใน postgres container ชั่วคราว (exit 0, stderr 0, 27 ตาราง, ledger 001–014, `line_customers=1`, `audit_log=117`)
+- [ ] ยังไม่มี auto-copy: การดึงออกนอก VM ยังเป็นการกดมือที่เครื่องผู้พัฒนา และ `FAIL` ใน `backup.log` ยังไม่มีเส้นทางแจ้งเตือน
 
 ## Limits ที่ยังค้าง
 
