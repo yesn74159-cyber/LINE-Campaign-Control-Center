@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fillFlexTemplate } from '../dist/api/flexTemplate.js';
+import { canonicalizeFlexTemplate, fillFlexTemplate } from '../dist/api/flexTemplate.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const campaigns = JSON.parse(fs.readFileSync(path.join(root, 'campaigns.json'), 'utf8')).campaigns;
@@ -28,7 +28,21 @@ test('the filled slots point at URLs that actually exist on this host', () => {
   assert.match(JSON.stringify(fillFlexTemplate(campaign, JSON.parse(fs.readFileSync(path.join(root, campaign.flexFile), 'utf8')))), /https:\/\/ccc\.bn9\.one\/share/);
 });
 
-test('a slot this app cannot know is left in place for the validator to refuse', () => {
-  const filled = fillFlexTemplate(campaigns[0], { type: 'flex', altText: '{{COUPON_CODE}}', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '{{TITLE}}' }] } } });
+test('saving the filled card back hands the URLs to the database, not this host name', () => {
+  process.env.PUBLIC_APP_ORIGIN = 'https://66t.online';
+  process.env.LINE_LIFF_CHANNEL_ID = '12345678-AbCdEf';
+  const campaign = campaigns.find((item) => item.id === 'welcome');
+  const raw = JSON.parse(fs.readFileSync(path.join(root, campaign.flexFile), 'utf8'));
+  const saved = JSON.stringify(canonicalizeFlexTemplate(campaign, fillFlexTemplate(campaign, raw)));
+  assert.ok(saved.includes('{{IMAGE_URL}}') && saved.includes('{{LIFF_URL}}'), 'the URL slots come back, so a domain change reaches every stored card');
+  assert.doesNotMatch(saved, /66t\.online|liff\.line\.me/, 'no host name survives the round trip');
+  assert.equal(canonicalizeFlexTemplate(campaign, fillFlexTemplate(campaign, raw)).contents.body.contents[0].text, campaign.title, 'the copy stays literal in the revision, because only the URL slots come from configuration');
+  const typed = fillFlexTemplate(campaign, raw);
+  typed.contents.hero.url = 'https://brand.example/promo.png';
+  assert.match(JSON.stringify(canonicalizeFlexTemplate(campaign, typed)), /https:\/\/brand\.example\/promo\.png/, 'a link the operator typed himself is not a filler value and stays literal');
+  delete process.env.LINE_LIFF_CHANNEL_ID;
+});
+
+test('a slot this app cannot know is left in place for the validator to refuse', () => {  const filled = fillFlexTemplate(campaigns[0], { type: 'flex', altText: '{{COUPON_CODE}}', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '{{TITLE}}' }] } } });
   assert.deepEqual(braces(filled), ['{{COUPON_CODE}}'], 'only the known slot was substituted');
 });

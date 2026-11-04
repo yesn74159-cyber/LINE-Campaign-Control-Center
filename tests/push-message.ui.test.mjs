@@ -272,3 +272,16 @@ test('a hostile Flex card renders as text, not as markup, in the preview', async
   assert.deepEqual(errors, []);
   console.log('FLEX_PREVIEW_SANITISED_PASS');
 });
+
+test('the dashboard hero states the gate as text, never as raw markup', async (t) => {
+  const closed = await openApp(t, harness());
+  assert.equal((await closed.page.locator('.hero-orb').innerText()).replace(/\s+/g, ' ').trim(), 'DRY RUN SAFE MODE');
+  assert.deepEqual(closed.errors, []);
+
+  const open = await openApp(t, harness({ liveSendEnabled: true }));
+  const orb = await open.page.locator('.hero-orb').innerText();
+  assert.equal(orb.replace(/\s+/g, ' ').trim(), 'LIVE READY SEND GATE OPEN');
+  assert.equal(await open.page.locator('.hero-orb.live').count(), 1, 'the orb switches to the live colour');
+  assert.deepEqual(open.errors, []);
+  console.log('HERO_ORB_PASS');
+});

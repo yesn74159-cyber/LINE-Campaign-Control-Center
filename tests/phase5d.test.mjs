@@ -353,12 +353,15 @@ test('invalid payloads fail terminally before the outbox row is marked SENDING',
 test('memory DRY_RUN enqueues through the same outbox pipeline', async () => {
   const previous = {
     PERSISTENCE: process.env.PERSISTENCE, APP_MODE: process.env.APP_MODE,
-    LINE_LIVE_ENABLED: process.env.LINE_LIVE_ENABLED, MEMORY_ADMIN_PASSWORD: process.env.MEMORY_ADMIN_PASSWORD
+    LINE_LIVE_ENABLED: process.env.LINE_LIVE_ENABLED, MEMORY_ADMIN_PASSWORD: process.env.MEMORY_ADMIN_PASSWORD,
+    PUBLIC_APP_ORIGIN: process.env.PUBLIC_APP_ORIGIN
   };
   process.env.PERSISTENCE = 'memory';
   process.env.APP_MODE = 'DRY_RUN';
   process.env.LINE_LIVE_ENABLED = 'false';
   process.env.MEMORY_ADMIN_PASSWORD = 'memory-test-password';
+  // The seeded card is filled from PUBLIC_APP_ORIGIN, and an unconfigured origin is a http link the validator refuses.
+  process.env.PUBLIC_APP_ORIGIN = 'https://staging.example';
   try {
     const { createMemoryRepository } = await import('../dist/api/repository.js');
     const repo = createMemoryRepository();
