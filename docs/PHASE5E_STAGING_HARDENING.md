@@ -90,8 +90,9 @@ worker ไม่ได้เปิดพอร์ต: ทุกลูปจะ�
 ## Smoke, backup, restore, audit
 
 ```bash
-# smoke (read-only; admin checks จะ skip ถ้าไม่ใส่ credential)
-SMOKE_BASE_URL=http://127.0.0.1:8787 npm run smoke:staging
+# smoke (read-only; ต้องใส่ admin credential — ไม่ใส่ = FAIL ไม่ใช่ skip)
+SMOKE_BASE_URL=http://127.0.0.1:8787 SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... \
+  npm run smoke:staging
 
 # backup ก่อน migration ทุกครั้ง
 BACKUP_DATABASE_URL=... npm run db:backup -- --out staging-backups --confirm

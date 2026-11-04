@@ -143,7 +143,7 @@ backend ที่ตกอยู่ในสภาพนี้ **ไม่ crash
 - write ลงจริง: `update campaigns set title = title || ' (app-role edit)'` → `UPDATE 7` และ owner เห็นแถวที่แก้; `insert into audit_log (...)` → `INSERT 0 1`
 - DDL ถูกปฏิเสธครบชุด: `create table`, `truncate table` (`permission denied for table campaigns`), `create role`, `createdb`, `create extension pg_trgm`
 - health query ของ [db.ts:202](../apps/api/src/db.ts#L202) รันได้เป็น app role: `current_schema=public`, `search_path="$user", public`, `pg_stat_ssl` อ่านได้, `to_regprocedure('gen_random_uuid()')` → `t`
-- **app จริงรันได้**: `node dist/api/server.js` ต่อด้วย `line_ccc_app` → smoke ผ่าน **16/16** (login → `role=owner`, dashboard, delivery-health, audit log, logout — logout เป็น write path ที่วิ่งผ่าน `WITH CHECK` ของ policy)
+- **app จริงรันได้**: `node dist/api/server.js` ต่อด้วย `line_ccc_app` → smoke ผ่าน **16/16** (login → `role=owner`, dashboard, delivery-health, audit log, logout — logout เป็น write path ที่วิ่งผ่าน `WITH CHECK` ของ policy) — ตัวเลข 16 คือสคริปต์ ณ วันนั้น; ตั้งแต่ P1-5 สคริปต์มี **21 เช็ค** และไม่มี admin credential = FAIL (ดู [PHASE5E](PHASE5E_STAGING_HARDENING.md#smoke-backup-restore-audit))
 - `node dist/api/worker.js --once` เป็น app role → exit 0 ไม่มี permission error
 - owner ยังทำงานครบ: `cli.js migrate` ผ่าน, `pg_dump` ได้ 113,578 bytes (TOC นับตารางได้), `createdb` + `pg_restore --exit-on-error` ลง scratch DB แล้วนับ `campaigns` ได้ 7 แถว → nightly backup และ restore drill ไม่พังตาม
 - idempotent: รัน 015 ซ้ำได้ `NOTICE: policies created for line_ccc_app: 0` และจำนวน policy ยัง 27
@@ -185,7 +185,7 @@ SQL
    ```
    ห้ามพิมพ์พาสเวิร์ดใน command line หรือในแชท — หน้านี้ psql ถามเองสองครั้ง
 3. `CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh` — gate ด้วย unix socket login เป็น app role, เก็บ owner URL ลง `.env.migrate` (600), พิมพ์พาสเวิร์ดที่ prompt, เขียน `DATABASE_URL` ใหม่, `up -d api worker`, ตรวจ `/health` ข้างใน api container และ **rollback ไฟล์ env เองถ้า api ไม่ healthy**
-4. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่าน 16/16, `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
+4. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่านครบทุกเช็ค (ต้องส่ง `SMOKE_ADMIN_EMAIL`/`SMOKE_ADMIN_PASSWORD` — ไม่ส่ง = FAIL), `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
 5. งาน migrate ครั้งถัดไปรันผ่าน `bash deploy/staging-migrate.sh migrate` เท่านั้น (และรัน `tier-c-apply.sh` ซ้ำถ้า migration สร้าง table ใหม่ — script พิมพ์เตือนไว้ท้ายรอบ)
 6. ถ้าขั้น 4 พัง: `cp .env.staging.bak-tierc-<stamp> .env.staging && docker compose ... up -d api worker` แล้วค่อยตัดสินใจเรื่อง rollback SQL (ด้านล่าง) — การปล่อย role ไว้พร้อม owner URL กลับคืน เป็น path ที่ข้อมูลไม่กระทบ
 

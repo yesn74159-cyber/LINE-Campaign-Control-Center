@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Read-only staging smoke. Never prints credentials, cookies or tokens.
+// Read-only staging smoke. Never prints credentials, cookies, tokens or customer identities.
 //   SMOKE_BASE_URL=https://staging.example.invalid \
 //   SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... \
 //   npm run smoke:staging
-// Admin checks are skipped when the credentials are absent.
+// Admin credentials are required. A run that cannot log in never proves readiness, so a
+// missing credential is a FAIL here and not a skip; the caller must supply one.
 const base = (process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
 const allowLive = process.env.SMOKE_ALLOW_LIVE === '1';
-const email = process.env.SMOKE_ADMIN_EMAIL || '';
+const email = (process.env.SMOKE_ADMIN_EMAIL || '').trim();
 const password = process.env.SMOKE_ADMIN_PASSWORD || '';
+// The worker writes a heartbeat on every loop (P0-6) and audits one every five minutes.
+const workerIdleMinutes = Number(process.env.SMOKE_WORKER_IDLE_MINUTES || 15);
 const results = [];
 
 function record(name, ok, detail) {
@@ -26,6 +29,9 @@ async function main() {
   record('health responds', health.ok, `HTTP ${health.status}`);
   if (!healthBody) throw new Error('health did not return JSON');
   record('health ok flag', healthBody.ok === true);
+  // Memory has no database to reach, so only a postgres deployment can attest `db=up`.
+  const expectedDb = healthBody.persistence === 'memory' ? 'not_configured' : 'up';
+  record('health db reachable', healthBody.db === expectedDb, `db=${healthBody.db}`);
   record('APP_MODE is DRY_RUN', allowLive ? healthBody.mode === 'DRY_RUN' || healthBody.mode === 'LIVE' : healthBody.mode === 'DRY_RUN', `mode=${healthBody.mode}`);
   record('persistence reported', typeof healthBody.persistence === 'string', `persistence=${healthBody.persistence}`);
   record('nosniff header', health.headers.get('x-content-type-options') === 'nosniff');
@@ -40,7 +46,7 @@ async function main() {
   record('dashboard requires a session', unauthenticated.status === 401, `HTTP ${unauthenticated.status}`);
 
   if (!email || !password) {
-    record('admin checks', true, 'skipped (SMOKE_ADMIN_EMAIL/PASSWORD not set)');
+    record('admin credentials provided', false, 'SMOKE_ADMIN_EMAIL/SMOKE_ADMIN_PASSWORD not set — without them the admin surface is never checked');
     return;
   }
 
@@ -62,9 +68,23 @@ async function main() {
 
   const ops = await get('/api/ops/delivery-health', { headers: { cookie: cookieHeader } });
   const opsBody = await ops.json().catch(() => null);
-  record('delivery health readable', ops.ok && typeof opsBody?.ok === 'boolean', `alerts=${Array.isArray(opsBody?.alerts) ? opsBody.alerts.join(',') || 'none' : 'n/a'}`);
+  const opsReadable = ops.ok && Boolean(opsBody);
+  record('delivery health readable', opsReadable && typeof opsBody?.ok === 'boolean', `HTTP ${ops.status} alerts=${Array.isArray(opsBody?.alerts) ? opsBody.alerts.join(',') || 'none' : 'n/a'}`);
   record('delivery health has counters', Number.isInteger(opsBody?.counts?.pending) && Number.isInteger(opsBody?.counts?.unknown));
+  // A stale worker leaves a scheduled campaign sitting in QUEUED forever; nothing else in
+  // the smoke would notice it.
+  record('worker not stale', opsReadable && opsBody?.workerStale === false, `workerStale=${opsBody?.workerStale}`);
+  const lastSeen = opsBody?.lastWorkerHeartbeat || opsBody?.lastWorkerActivity || null;
+  const workerAgeMinutes = lastSeen === null ? null : Math.round((Date.now() - Date.parse(lastSeen)) / 60_000);
+  record('worker seen recently', workerAgeMinutes !== null && workerAgeMinutes <= workerIdleMinutes, workerAgeMinutes === null ? 'no worker heartbeat or delivery recorded yet' : `last worker evidence ${workerAgeMinutes}m ago (limit ${workerIdleMinutes}m)`);
   record('quota snapshot present', Array.isArray(opsBody?.quota));
+
+  const customers = await get('/api/customers', { headers: { cookie: cookieHeader } });
+  const customersBody = await customers.json().catch(() => null);
+  const customerRows = Array.isArray(customersBody?.customers) ? customersBody.customers : null;
+  // Counts only: the smoke must never echo a recipient key or a display name.
+  const customersShaped = customerRows !== null && customerRows.every((item) => typeof item.id === 'string' && typeof item.lineUserKey === 'string' && typeof item.optIn === 'boolean' && (item.optOutSource === undefined || typeof item.optOutSource === 'string') && (item.blockedAt === undefined || typeof item.blockedAt === 'string') && (item.optOutAt === undefined || typeof item.optOutAt === 'string'));
+  record('customers payload shaped', customers.ok && customersShaped, `HTTP ${customers.status} customers=${customerRows?.length ?? 'n/a'}`);
 
   const audit = await get('/api/audit', { headers: { cookie: cookieHeader } });
   const auditBody = await audit.json().catch(() => null);

@@ -345,7 +345,7 @@ test('scheduled_at is read as Asia/Bangkok from the API and the admin form', asy
   assert.match(installer, /neither UTC nor Asia\/Bangkok/);
 });
 
-test('staging smoke passes against a local memory API and stays secret-free', async () => {
+test('staging smoke fails without admin credentials, still runs the admin path, and stays secret-free', async () => {
   const password = randomBytes(18).toString('base64url');
   const port = 18000 + Math.floor(Math.random() * 1000);
   const server = spawn(process.execPath, ['dist/api/server.js'], {
@@ -379,20 +379,39 @@ test('staging smoke passes against a local memory API and stays secret-free', as
     }
     assert.equal(ready, true, `memory API did not start: ${serverLog}`);
 
-    const run = spawnSync(process.execPath, ['scripts/staging-smoke.mjs'], {
+    const smoke = (env) => spawnSync(process.execPath, ['scripts/staging-smoke.mjs'], {
       cwd: root,
-      env: { ...process.env, SMOKE_BASE_URL: `http://127.0.0.1:${port}`, SMOKE_ADMIN_EMAIL: '', SMOKE_ADMIN_PASSWORD: '' },
+      env: { ...process.env, SMOKE_BASE_URL: `http://127.0.0.1:${port}`, ...env },
       encoding: 'utf8',
       timeout: 30000
     });
-    assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
-    assert.match(run.stdout, /PASS health responds/);
-    assert.match(run.stdout, /PASS APP_MODE is DRY_RUN/);
-    assert.match(run.stdout, /PASS LINE Login stays disabled/);
-    assert.match(run.stdout, /PASS dashboard requires a session/);
-    assert.match(run.stdout, /skipped \(SMOKE_ADMIN_EMAIL\/PASSWORD not set\)/);
-    assert.ok(!run.stdout.includes(password), 'smoke output must never print the memory password');
-    assert.ok(!run.stdout.includes('ccc_session='), 'smoke output must never print session cookies');
+
+    // Without credentials the old script printed a skip and exited 0, so a broken admin
+    // surface read as a green smoke.
+    const blank = smoke({ SMOKE_ADMIN_EMAIL: '', SMOKE_ADMIN_PASSWORD: '' });
+    assert.equal(blank.status, 1, `${blank.stdout}\n${blank.stderr}`);
+    assert.match(blank.stdout, /PASS health responds/);
+    assert.match(blank.stdout, /PASS health db reachable — db=not_configured/);
+    assert.match(blank.stdout, /PASS APP_MODE is DRY_RUN/);
+    assert.match(blank.stdout, /PASS LINE Login stays disabled/);
+    assert.match(blank.stdout, /PASS dashboard requires a session/);
+    assert.match(blank.stdout, /FAIL admin credentials provided/);
+    assert.doesNotMatch(blank.stdout, /PASS admin login/, 'a run without credentials must not touch the admin surface');
+
+    const full = smoke({ SMOKE_ADMIN_EMAIL: 'smoke@local.test', SMOKE_ADMIN_PASSWORD: password });
+    assert.equal(full.status, 1, `${full.stdout}\n${full.stderr}`);
+    assert.match(full.stdout, /PASS admin login — HTTP 200/);
+    assert.match(full.stdout, /PASS session resolves to a user — role=owner/);
+    assert.match(full.stdout, /PASS customers payload shaped/);
+    assert.match(full.stdout, /PASS audit log readable/);
+    assert.match(full.stdout, /PASS admin logout — HTTP 200/);
+    // Memory mode has no ops endpoint, so the smoke must refuse to call the run clean.
+    assert.match(full.stdout, /FAIL delivery health readable — HTTP 404/);
+
+    for (const run of [blank, full]) {
+      assert.ok(!run.stdout.includes(password), 'smoke output must never print the memory password');
+      assert.ok(!run.stdout.includes('ccc_session='), 'smoke output must never print session cookies');
+    }
   } finally {
     server.kill('SIGTERM');
     await new Promise((resolve) => server.once('exit', resolve));
