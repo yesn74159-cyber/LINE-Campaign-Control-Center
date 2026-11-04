@@ -94,8 +94,15 @@ export default function LiffSharePage() {
         }
         setPhase('ready');
         setStatus('เลือกเพื่อนหรือกลุ่ม แล้วกดยืนยันเพื่อส่งในชื่อของคุณ');
-      } catch {
-        if (alive) { setPhase('outside'); setStatus('เชื่อม LIFF ไม่สำเร็จ · น่าจะเปิดหน้านี้นอกแอป LINE'); }
+      } catch (error) {
+        if (!alive) return;
+        // Swallowing this into "open this inside LINE" hid the real cause — a CSP that blocked the
+        // LIFF bridge — behind a message that pointed at the operator's phone instead of our header.
+        const detail = error && typeof error === 'object'
+          ? String((error as { code?: unknown }).code || (error as Error).message || (error as Error).name || '')
+          : String(error || '');
+        setPhase('outside');
+        setStatus(detail ? `เชื่อม LIFF ไม่สำเร็จ · ${detail.slice(0, 140)}` : 'เชื่อม LIFF ไม่สำเร็จ · น่าจะเปิดหน้านี้นอกแอป LINE');
       }
     })();
     return () => { alive = false; };
