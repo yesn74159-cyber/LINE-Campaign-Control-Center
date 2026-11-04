@@ -148,27 +148,38 @@ backend ที่ตกอยู่ในสภาพนี้ **ไม่ crash
 - default privileges ทำงานจริง: สร้าง table ใหม่ด้วย owner แล้ว app role `insert`/`select` ได้ทันที (`pg_default_acl`: `r` → `line_ccc_app=arwd/line_ccc`, `S` → `line_ccc_app=rwU/line_ccc`) แต่ table ใหม่**ไม่ได้เปิด RLS** → ต้องรัน 015 ซ้ำหลังทุก migration (block 3/4 ของ verifier จับให้ได้)
 - ทดสอบ verifier โดยสร้างตารางที่เปิด RLS แต่ไม่มี policy ขึ้นมาหนึ่งตัว → รายงาน `DIFFERENCE zz_drift_gap: owner sees 2, line_ccc_app sees 0` ตรงตามตั้งใจ
 
-**5) สิ่งที่ต้องเปลี่ยนนอกเหนือจาก SQL (ยังไม่ทำ — ต้องอนุมัติเป็นขั้นแยก)**
+**5) สิ่งที่ต้องเปลี่ยนนอกเหนือจาก SQL (เขียนเครื่องมือไว้แล้วใน `deploy/` — ยังไม่ได้รันบน staging)**
 
-- `.env.staging`: `DATABASE_URL` ของ api/worker ชี้ไป `line_ccc_app` (สอง service ใช้ `env_file` ตัวเดียวกัน) และเก็บ owner URL ไว้สำหรับงาน migrate
-- [cli.ts](../apps/api/src/cli.ts) ใช้ pool เดียวจาก `DATABASE_URL` สำหรับ `migrate|seed|setup|ops|rotate-vault` → คำสั่งเหล่านั้นต้องเรียกด้วย owner URL ชัดเจน (เช่น `docker compose run -e DATABASE_URL=...`) มิฉะนั้น migration จะล้มเหลวที่ `permission denied for schema public` ซึ่ง fail loud ถือว่าปลอดภัยกว่า fail เงียบ
+- `deploy/tier-c-apply.sh` — gate `CONFIRM=TIER-C`, refusing ถ้าไม่มี `backups/nightly-*.dump` ใหม่กว่า 26 ชม. และ refused ถ้า `pg_isready` ไม่ตอบ; apply `015` แบบ `--single-transaction` แล้วรัน verifier เก็บรายงานเป็นไฟล์ใน `backups/`
+- `deploy/tier-c-switch-runtime.sh` — gate `CONFIRM=TIER-C-SWITCH`; ยืนยันว่า `line_ccc_app` อ่าน `campaigns` ผ่าน policy ของตัวเองได้ทาง unix socket ก่อนแก้ file, เก็บ owner URL ลง `.env.migrate` (chmod 600) แล้วจึงเขียน `DATABASE_URL` ใหม่ใน `.env.staging` (มี `.env.staging.bak-tierc-<stamp>`), `up -d api worker` และ **rollback env file คืนเองถ้า `/health` ไม่ผ่าน**
+- [cli.ts](../apps/api/src/cli.ts) ใช้ pool เดียวจาก `DATABASE_URL` สำหรับ `migrate|seed|setup|ops|rotate-vault` → `deploy/staging-migrate.sh` เป็นทางเดียวที่อนุญาตให้เรียกงานเหล่านั้น: อ่าน owner URL จาก `.env.migrate`, `export DATABASE_URL` ด้วย builtin ของ bash (ไม่เข้า argv) แล้วส่งต่อแบบ `docker compose run --rm --no-deps -e DATABASE_URL` (ยืนยันแล้วบน Compose v2 ว่า bare `-e NAME` ทับค่าจาก `env_file`) — script ปฏิเสธการเรียกแบบไม่มี argument และปฏิเสธ `setup` เพราะค่า default ของ CLI คือ migrate+seed
 - integration suites ที่สร้าง disposable DB ต้องใช้ owner URL (พวกมันรัน migration เอง)
 - `LINE_IDENTITY_HASH_KEY` rotation เป็นอีกขั้น ไม่รวมมากับ Tier C
 
-ลำดับการ apply บน staging เมื่อได้รับอนุมัติ (แต่ละขั้นรันจาก `/srv/line-ccc-staging`, owner URL ไม่เคยโผล่ใน argv ของ host เพราะ psql รันใน container):
+ลำดับการ apply บน staging (อนุมัติแล้ว 2026-11-04 — ผู้ดำเนินการคือเจ้าของระบบ รันเองบน VM ด้วยบัญชี `ubuntu`, หน้าต่างเวลา **2026-11-05 10:00–10:45 ICT / 03:00–03:45 UTC**)
 
-1. `deploy/nightly-backup.sh` เอาสำเนาล่าสุด + `offsite-backup.ps1` ที่เครื่อง + `sha256sum -c --strict` → ยืนยันว่ามีอะไรให้ rollback
-2. copy `db/proposals/015_tier_c_app_role.sql` เข้า postgres container (`docker compose ... cp <file> postgres:/tmp/015.sql`) แล้วยิง:
-   ```bash
-   docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T postgres \
-     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" --single-transaction -v ON_ERROR_STOP=1 -f /tmp/015.sql'
-   ```
-   ต้องมี `sh -c` เพราะ `$POSTGRES_DB` ถูก expand ภายใน container เท่านั้น (บน host ว่างเปล่า) — เหตุผลเดียวกับ nightly-backup.sh และไม่มี credential ใดอยู่ใน argv
-3. ตั้ง password ของ `line_ccc_app` ด้วย `... exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\password line_ccc_app"'` (interactive, ไม่ใส่พาสเวิร์ดใน command line) แล้วเก็บเข้า `.env.staging`
-4. แก้ `.env.staging` เพิ่ม `DATABASE_URL` ตัวใหม่ที่เป็น app role แล้ว `docker compose ... up -d api worker`
-5. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่าน 16/16, `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
-6. งาน migrate ครั้งถัดไปต้องรันด้วย owner URL เท่านั้น (และต้องรัน 015 ซ้ำถ้ามี table ใหม่)
-7. ถ้าขั้น 5 พัง: rollback ด้านล่าง + `DATABASE_URL` กลับเป็น owner + `up -d api worker`
+ก่อนเข้าหน้าต่าง (read-only ทั้งคู่ — คำสั่งที่สามใช้ heredoc เพื่อไม่ต้องมี single quote ซ้อนใน `sh -c` และต่อ socket ใน container ที่ trust อยู่แล้ว จึงไม่ต้องใช้พาสเวิร์ด):
+```bash
+tail -3 /srv/line-ccc-staging/backups/backup.log        # ต้องเห็น "nightly OK … tables=27" ของรอบ 03:30 ICT วันนี้
+ls -1t /srv/line-ccc-staging/backups/nightly-*.dump | head -1
+cd /srv/line-ccc-staging && docker compose -f docker-compose.staging.yml --env-file .env.staging \
+  exec -T postgres psql -U line_ccc -d line_campaign_ccc -X -A <<'SQL'
+select id, status, scheduled_at, available_at
+from scheduler_jobs
+where status in ('QUEUED','PAUSED','CLAIMED','SENDING','RETRYABLE')
+order by available_at nulls last;
+SQL
+```
+ถ้าคิวงานมีรายการที่ trigger ตรงช่วง 10:00–10:45 ICT ให้ **เลื่อนหน้าต่าง** ไม่ใช่พัก worker (worker หยุดอยู่แล้วระหว่าง `up -d` ในขั้น 4 เท่านั้น)
+
+ขั้นในหน้าต่าง (แต่ละขั้นรันจาก `/srv/line-ccc-staging`; owner URL ไม่เคยโผล่ใน argv เพราะ psql รันใน container และ `DATABASE_URL` ถูก export ด้วย bash builtin):
+
+1. `CONFIRM=TIER-C bash deploy/tier-c-apply.sh` — script refuse เองถ้า dump ล่าสุดเก่ากว่า 26 ชม. หรือ `pg_isready` ไม่ตอบ; apply `015_tier_c_app_role.sql` ด้วย `--single-transaction -v ON_ERROR_STOP=1` แล้วรัน `verify-tier-c.sql` ต่อทันที เก็บทุกอย่างไว้ใน `backups/tier-c-apply-<stamp>.txt` (script ยังไม่แตะ `.env.staging`)
+2. ตั้ง password ของ `line_ccc_app`: `docker compose -f docker-compose.staging.yml --env-file .env.staging exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\password line_ccc_app"'` (interactive — ห้ามพิมพ์พาสเวิร์ดใน command line หรือในแชท)
+3. `CONFIRM=TIER-C-SWITCH bash deploy/tier-c-switch-runtime.sh` — gate ด้วย unix socket login เป็น app role, เก็บ owner URL ลง `.env.migrate` (600), พิมพ์พาสเวิร์ดที่ prompt, เขียน `DATABASE_URL` ใหม่, `up -d api worker`, ตรวจ `/health` และ **rollback ไฟล์ env เองถ้า api ไม่ healthy**
+4. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่าน 16/16, `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
+5. งาน migrate ครั้งถัดไปรันผ่าน `bash deploy/staging-migrate.sh migrate` เท่านั้น (และรัน `tier-c-apply.sh` ซ้ำถ้า migration สร้าง table ใหม่ — script พิมพ์เตือนไว้ท้ายรอบ)
+6. ถ้าขั้น 4 พัง: `cp .env.staging.bak-tierc-<stamp> .env.staging && docker compose ... up -d api worker` แล้วค่อยตัดสินใจเรื่อง rollback SQL (ด้านล่าง) — การปล่อย role ไว้พร้อม owner URL กลับคืน เป็น path ที่ข้อมูลไม่กระทบ
 
 **6) ช่องโหว่ที่ยังเหลือหลัง Tier C (ต้องตัดสินใจแยก)**
 
@@ -180,7 +191,7 @@ superuser login ยังมีอยู่ และเอาออกได้
 - [x] Tier A/B apply บน staging แล้ว → สถานะก่อน Tier C คือ RLS ทุกตาราง, policy 0, ไม่มี `FORCE`, `line_ccc` ยัง superuser+BYPASSRLS
 - [x] backup สำเร็จ + checksum + restore drill ผ่าน (2026-11-04: nightly cron บน VM + สำเนาออกนอก VM + restore dump จริงลง scratch DB และนับแถวเทียบกับบันทึก)
 - [x] ซ้อมบน disposable DB — 015 ทั้งบล็อก (migrate 001–014 + seed + Tier A/B + Tier C + app จริง + worker + smoke 16/16) รายละเอียดข้างบน
-- [ ] อนุมัติรายการ SQL ของ 015 และหน้าต่างเวลา พร้อมชื่อผู้ดำเนินการ
+- [x] อนุมัติรายการ SQL ของ 015 และหน้าต่างเวลา พร้อมชื่อผู้ดำเนินการ — **อนุมัติ 2026-11-04**: รายการ SQL ตามไฟล์ที่ commit ใน `f867d00` (ไม่มีการแก้ถ้อยคำ), ผู้ดำเนินการ = เจ้าของระบบ (รันเองบน VM, บัญชี `ubuntu`), หน้าต่าง **2026-11-05 10:00–10:45 ICT / 03:00–03:45 UTC** — choose เพราะอยู่หลังรอบ cron แรก (03:30 ICT = 20:30 UTC) ที่ verify แล้ว ~6.5 ชม. → dump ล่าสุดผ่าน gate 26 ชม. ของ `tier-c-apply.sh` ด้วยอายุจริง ไม่ใช่ dump เก่า, รอบ cron ถัดไปอยู่หลังหน้าต่างอีก ~16 ชม. จึงไม่มีงาน backup ซ้อนกับช่วงเปลี่ยนสิทธิ์ และ `APP_MODE=DRY_RUN` + `LINE_LIVE_ENABLED=false` ไม่มีสิทธิ์ส่งจริงกลางหน้าต่าง
 - [ ] หลัง apply: รัน `verify-tier-c.sql` ซ้ำ, smoke, integration suites และเฝ้า error rate อย่างน้อยหนึ่งรอบ scheduler
 - [x] rollback เขียนไว้ด้านล่าง **และทดสอบบน disposable DB แล้ว** (apply → rollback → apply ครบหนึ่งรอบ)
 
@@ -217,7 +228,7 @@ DETAIL:  27 objects in database line_ccc_restore_drill
 
 ทางแก้คือ `dropdb <scratch db>` ก่อน (หรือเล็งว่าไม่ต้องลบ role เลย — rollback ที่ปลอดภัยกว่าคือเปลี่ยน `DATABASE_URL` กลับเป็น owner URL แล้วปล่อย role ไว้) ผลซ้อมหลัง rollback: policy 0, role หาย, `pg_default_acl` 0, grant ของ app role 0, **ข้อมูลครบ (campaigns ยัง 7 แถว)** และ RLS ยังเปิด 27 ตารางเท่าเดิม = กลับสู่สถานะ Tier B พอดี
 
-หมายเหตุ 2026-11-04: Tier A/B ผ่านไปแล้ว, Tier C ถูกเขียนเป็น proposal + ซ้อมครบแล้ว แต่ยัง **ไม่ถูก apply บน staging** เพราะ gate เรื่องอนุมัติรายการ SQL + หน้าต่างเวลายังเปิดอยู่ และการสลับ `DATABASE_URL` ต้องทำพร้อม `.env.staging` ไม่ใช่พร้อม SQL อย่างเดียว
+หมายเหตุ 2026-11-04 (รอบสองของวัน): Tier A/B ผ่านไปแล้ว, Tier C ถูกเขียนเป็น proposal + ซ้อมครบ + **อนุมัติรายการ SQL และกำหนดหน้าต่างเวลาแล้ว** แต่ยังไม่ถูก apply บน staging — gate ที่เหลือคือ executions ตามลำดับข้างบน ซึ่งผู้ดำเนินการรันเอง (ไม่มีอะไรในขั้นเหล่านี้ที่ agent รันแทนได้: ทุกคำสั่งแตะ host จริง) และ `.env.staging` ต้องสลับในขั้น 3 ของหน้าต่าง ไม่ใช่พร้อม SQL อย่างเดียว
 
 ## 4) Cloud audit / backup / restore drill — สถานะและสิ่งที่ต้องเตรียม
 

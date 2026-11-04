@@ -7,7 +7,7 @@
 | `013_rls_grant_tier_ab.sql` | A + B | revoke สิทธิ์ `anon`/`authenticated` (ถ้า role มีอยู่) และ `ENABLE ROW LEVEL SECURITY` ทุกตารางใน schema ปัจจุบัน โดยไม่สร้าง policy และไม่ใช้ `FORCE` — **apply บน staging แล้ว 2026-11-01** |
 | `013_fk_supporting_indexes.sql` | C (บางส่วน) | 7 index สำหรับ FK ที่ audit พบว่าไม่มี index รองรับ; ต้องรัน `CONCURRENTLY` นอก transaction |
 | `verify-rls-grant.sql` | read-only | ตรวจ RLS coverage, policy, สิทธิ์ browser role และ FK index ก่อน/หลัง |
-| `015_tier_c_app_role.sql` | C | สร้าง role `line_ccc_app` (NOBYPASSRLS) + grant DML + default privileges + permissive policy ทุกตารางที่ยังไม่มี policy — **proposal only, ยังไม่ apply** |
+| `015_tier_c_app_role.sql` | C | สร้าง role `line_ccc_app` (NOBYPASSRLS) + grant DML + default privileges + permissive policy ทุกตารางที่ยังไม่มี policy — **อนุมัติรายการ SQL + หน้าต่างเวลาแล้ว (2026-11-04), ยังไม่ apply**; apply ผ่าน `deploy/tier-c-apply.sh` |
 | `verify-tier-c.sql` | read-only | ตรวจ attributes ของ role, coverage ของ policy, drift (ตารางที่ app role มองไม่เห็น/เขียนไม่ได้), สิทธิ์ DDL, default privileges, sequences และ probe เทียบจำนวนแถว owner vs app role ใน transaction เดียว |
 
 ## Tier C สรุปจากผลซ้อม 2026-11-04
@@ -16,7 +16,7 @@
 - **`NOBYPASSRLS` บน superuser ไม่มีผล** — ซ้อมแล้ว `rolbypassrls=f` แต่ยังเห็นครบ 7 แถวและเขียนได้ 015 จึงไม่ตั้ง flag นี้ (ตั้งไป audit จะสวยแต่พฤติกรรมเท่าเดิม)
 - **policy block ขาดไม่ได้** — role ที่มี grant DML ครบแต่ไม่มี policy จะ `select` ได้ 0 แถว**เงียบ ๆ**, `insert` จะ error เรื่อง RLS; backend ไม่ crash แต่เสิร์ฟ admin panel ว่างเปล่า
 - ผลซ้อมเต็ม + rollback ที่รันจริง + ลำดับการ apply บน staging อยู่ใน [PHASE5F](../../docs/PHASE5F_OPERATIONS_ROTATION_RLS.md) หัวข้อ "Tier C — ผลซ้อมบน disposable DB"
-- งานที่ต้องทำพร้อมกัน (ยังไม่ได้ทำ): สลับ `DATABASE_URL` ใน `.env.staging` และเรียก `cli.js migrate|seed|setup|ops|rotate-vault` ด้วย owner URL เพราะ [cli.ts](../../apps/api/src/cli.ts) ใช้ pool เดียว
+- งานที่ต้องทำพร้อม SQL (เขียนเครื่องมือไว้แล้ว ยังไม่ได้รัน): `deploy/tier-c-apply.sh` (gate `CONFIRM=TIER-C`) → `\password line_ccc_app` → `deploy/tier-c-switch-runtime.sh` (gate `CONFIRM=TIER-C-SWITCH`, เก็บ owner URL ลง `.env.migrate` แล้วสลับ `DATABASE_URL`) และ `deploy/staging-migrate.sh` เป็นทางเดียวที่เรียก `cli.js migrate|seed|ops|rotate-vault` ด้วย owner URL เพราะ [cli.ts](../../apps/api/src/cli.ts) ใช้ pool เดียว — ลำดับเต็ม + หน้าต่างเวลาอยู่ใน [PHASE5F](../../docs/PHASE5F_OPERATIONS_ROTATION_RLS.md)
 
 ## ทำไมยังไม่ใช้ FORCE
 
