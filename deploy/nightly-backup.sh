@@ -13,6 +13,12 @@
 # VM. Copying the newest dumps off the host is a separate step (see docs/PHASE5E).
 set -euo pipefail
 
+# cron starts with PATH=/usr/bin:/bin only. Docker's apt package puts the CLI and
+# the compose plugin on this list, so state it instead of inheriting whatever the
+# scheduler happens to expose.
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+export PATH
+
 DEPLOY_DIR="${DEPLOY_DIR:-/srv/line-ccc-staging}"
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_DIR/backups}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.staging.yml}"
