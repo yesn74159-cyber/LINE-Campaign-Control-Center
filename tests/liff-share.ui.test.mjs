@@ -54,13 +54,16 @@ function harness({ liffId = LIFF_ID, oaUrl = OA_URL } = {}) {
   return { server };
 }
 
-async function openPage(t, fixture, routePath = '/') {
+async function openPage(t, fixture, routePath = '/', liffSdk) {
   await new Promise((resolve) => fixture.server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   t.after(() => browser.close());
   const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 } });
   await context.addCookies([{ name: 'ccc_csrf', value: 'qa-token', domain: '127.0.0.1', path: '/' }]);
+  if (liffSdk) {
+    await context.route(/https:\/\/static\.line-scdn\.net\/.+/, (route) => void route.fulfill({ status: 200, contentType: 'text/javascript', body: liffSdk }));
+  }
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -97,6 +100,51 @@ test('the share page renders the card and refuses to pretend it can send outside
   await page.locator('.flex-render').filter({ hasText: firstFlexText(CARD.contents) }).waitFor({ timeout: 10_000 });
   await page.locator('a[href^="https://line.me/R/msg/text/?"]').waitFor({ timeout: 20_000 });
   assert.equal(await page.getByRole('button', { name: 'เลือกเพื่อนแล้วส่ง' }).count(), 0, 'no share button is offered when LIFF cannot answer');
+  assert.deepEqual(errors, []);
+});
+
+// Enumerated from the bundle LINE's CDN actually serves (SDK 2.31.2): isInClient, getLineVersion and
+// permission.requestAll. The page used to call isInClientLINEApp/getClientVersion/requestPermission,
+// which threw on every phone and left the operator with only the text fallback, with no test to notice.
+const IN_APP_SDK = `
+window.__liffCalls = [];
+window.liff = {
+  init: (options) => { window.__liffCalls.push('init:' + options.liffId); return Promise.resolve(); },
+  isInClient: () => true,
+  isLoggedIn: () => true,
+  login: () => { window.__liffCalls.push('login'); },
+  isApiAvailable: (name) => { window.__liffCalls.push('available:' + name); return name === 'shareTargetPicker'; },
+  getLineVersion: () => '14.5.0',
+  permission: { requestAll: (scopes) => { window.__liffCalls.push('requestAll:' + scopes.join()); return Promise.resolve(); } },
+  shareTargetPicker: (messages, options) => {
+    window.__liffCalls.push('share:' + messages[0].altText + ':' + (options && options.multiple));
+    return Promise.resolve({ status: 'success' });
+  }
+};
+`;
+
+test('inside the LINE app the page reaches the real send button and calls the SDK with names it has', async (t) => {
+  const { page, errors } = await openPage(t, harness(), `/share?c=${toBase64Url(CARD)}`, IN_APP_SDK);
+  const send = page.getByRole('button', { name: 'เลือกเพื่อนแล้วส่ง' });
+  await send.waitFor({ timeout: 10_000 });
+  assert.equal(await page.locator('a[href^="https://line.me/R/msg/text/?"]').count(), 0, 'the text fallback is not offered in-app');
+  await send.click();
+  await page.locator('.share-result').filter({ hasText: 'ส่งแล้ว' }).waitFor({ timeout: 10_000 });
+  assert.deepEqual(await page.evaluate(() => window.__liffCalls), [
+    `init:${LIFF_ID}`, 'available:shareTargetPicker', `share:${CARD.altText}:true`,
+  ], 'init, the availability gate, then the picker with the card from the link');
+  assert.deepEqual(errors, []);
+});
+
+// The card survives a phone that has not granted chat_message.write: the hint has to offer the button
+// that asks for it through the SDK surface that exists.
+test('a refused permission can be asked for again through permission.requestAll', async (t) => {
+  const denied = IN_APP_SDK.replace(
+    "return Promise.resolve({ status: 'success' });",
+    "return Promise.resolve({ status: 'fail', errorCode: 'PERMISSION_NOT_GRANTED' });");
+  const { page, errors } = await openPage(t, harness(), `/share?c=${toBase64Url(CARD)}`, denied);
+  await page.getByRole('button', { name: 'เลือกเพื่อนแล้วส่ง' }).click();
+  await page.getByRole('button', { name: 'ขออนุญาตส่งข้อความในแชท' }).waitFor({ timeout: 10_000 });
   assert.deepEqual(errors, []);
 });
 

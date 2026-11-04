@@ -3,14 +3,17 @@ import FlexPreview from './FlexPreview.js';
 import { buildShareLink, decodeShareLink, textShareLink, type FlexCard } from './liffShare.js';
 
 type ShareResult = { status: 'success' | 'cancel' | 'fail'; errorCode?: string; errorMessage?: string };
+// Names are the ones https://static.line-scdn.net/liff/edge/2/sdk.js actually installs (verified against
+// SDK 2.31.2 by enumerating window.liff). An earlier draft called isInClientLINEApp/getClientVersion/
+// requestPermission from documentation of a different version; the calls threw, the funnel died silently.
 type Liff = {
   init: (options: { liffId: string }) => Promise<void>;
-  isInClientLINEApp: () => boolean;
+  isInClient: () => boolean;
   isLoggedIn: () => boolean;
   login: () => void;
   isApiAvailable: (name: string) => boolean;
-  getClientVersion: () => string;
-  requestPermission: (scopes: string[]) => Promise<{ allGranted?: boolean }>;
+  getLineVersion: () => string | null;
+  permission: { requestAll: (scopes: string[]) => Promise<unknown> };
   shareTargetPicker: (messages: unknown[], options?: { multiple?: boolean }) => Promise<ShareResult>;
 };
 
@@ -81,7 +84,7 @@ export default function LiffSharePage() {
       try {
         await window.liff!.init({ liffId });
         if (!alive) return;
-        if (!window.liff!.isInClientLINEApp()) {
+        if (!window.liff!.isInClient()) {
           setPhase('outside');
           setStatus('เปิดหน้านี้ในแอป LINE เท่านั้น (แตะลิงก์ในแชทหรือสแกน QR ด้วยกล้อง LINE)');
           return;
@@ -89,15 +92,15 @@ export default function LiffSharePage() {
         if (!window.liff!.isLoggedIn()) { window.liff!.login(); return; }
         if (!window.liff!.isApiAvailable('shareTargetPicker')) {
           setPhase('outside');
-          setStatus(`แอป LINE ${window.liff!.getClientVersion() || 'เวอร์ชันเก่า'} ไม่รองรับการแชร์การ์ด · อัปเดตแอปแล้วเปิดใหม่`);
+          setStatus(`แอป LINE ${window.liff!.getLineVersion() || 'เวอร์ชันเก่า'} ไม่รองรับการแชร์การ์ด · อัปเดตแอปแล้วเปิดใหม่`);
           return;
         }
         setPhase('ready');
         setStatus('เลือกเพื่อนหรือกลุ่ม แล้วกดยืนยันเพื่อส่งในชื่อของคุณ');
       } catch (error) {
         if (!alive) return;
-        // Swallowing this into "open this inside LINE" hid the real cause — a CSP that blocked the
-        // LIFF bridge — behind a message that pointed at the operator's phone instead of our header.
+        // Showing the raw message is what turned "your phone is wrong" into a real diagnosis:
+        // the page blamed the operator's device while a TypeError from our own call was the cause.
         const detail = error && typeof error === 'object'
           ? String((error as { code?: unknown }).code || (error as Error).message || (error as Error).name || '')
           : String(error || '');
@@ -146,7 +149,10 @@ export default function LiffSharePage() {
         setNeedsPermission((outcome.errorCode || '') === 'PERMISSION_NOT_GRANTED');
       }
     } catch (error) {
-      const code = error instanceof Error ? error.name : '';
+      // The SDK rejects with a plain { code } object rather than an Error, so the name alone loses the reason.
+      const code = error && typeof error === 'object'
+        ? String((error as { code?: unknown }).code || (error as Error).name || '')
+        : '';
       setResult(ERROR_HINTS[code] || 'ส่งไม่สำเร็จ · ลองอีกครั้ง');
       setNeedsPermission(code === 'PERMISSION_NOT_GRANTED');
     } finally { setBusy(false); }
@@ -154,7 +160,7 @@ export default function LiffSharePage() {
 
   const askPermission = async () => {
     setBusy(true);
-    try { await window.liff!.requestPermission(['chat_message.write']); window.location.reload(); }
+    try { await window.liff!.permission.requestAll(['chat_message.write']); window.location.reload(); }
     catch { setResult('ขออนุญาตไม่สำเร็จ · ลองอีกครั้ง'); setBusy(false); }
   };
 
