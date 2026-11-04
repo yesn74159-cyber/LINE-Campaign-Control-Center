@@ -170,6 +170,21 @@ export function safeDatabaseErrorMessage(diagnostics: DatabaseErrorDiagnostics) 
   return `${diagnostics.errorType} error while running the read-only PostgreSQL connection test.`;
 }
 
+/**
+ * Liveness probe with a hard ceiling: a saturated pool would otherwise make /health
+ * hang for the full statement timeout and the container healthcheck would see a timeout
+ * instead of a clean failure.
+ */
+export async function isDatabaseReachable(pool: { query: (text: string) => Promise<unknown> }, timeoutMs = 1500): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); });
+  try {
+    return await Promise.race([pool.query('select 1').then(() => true, () => false), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createDatabase() {
   const target = readTarget();
   const schema = readSchema(target);

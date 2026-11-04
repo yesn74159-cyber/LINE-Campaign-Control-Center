@@ -160,7 +160,8 @@ test('delivery health reports alerts without leaking recipient data', async () =
   const { readDeliveryHealth, opsThresholds } = await import('../dist/api/opsHealth.js');
   assert.throws(() => opsThresholds({ OPS_STUCK_MINUTES: '0' }), /OPS_STUCK_MINUTES/);
   assert.throws(() => opsThresholds({ OPS_QUOTA_WARN_PERCENT: '101' }), /OPS_QUOTA_WARN_PERCENT/);
-  assert.deepEqual(opsThresholds({}), { stuckMinutes: 15, workerStaleMinutes: 10, quotaWarnPercent: 80 });
+  assert.deepEqual(opsThresholds({}), { stuckMinutes: 15, workerStaleMinutes: 10, quotaWarnPercent: 80, tokenCheckDays: 7 });
+  assert.throws(() => opsThresholds({ OPS_TOKEN_CHECK_DAYS: '0' }), /OPS_TOKEN_CHECK_DAYS/);
 
   const stale = new Date(Date.now() - 60 * 60 * 1000);
   const unhealthyPool = {
@@ -168,7 +169,7 @@ test('delivery health reports alerts without leaking recipient data', async () =
       if (sql.includes('from outbox_deliveries')) {
         return { rows: [{ pending: 2, sending: 1, retryable: 0, unknown: 1, sent: 4, failed: 0, skipped: 0, stuck: 2, oldest_pending_seconds: 3600, last_worker_activity: stale }] };
       }
-      return { rows: [{ id: 'oa-1', display_name: 'QA OA', quota_per_minute: 10, monthly_quota: 1000, monthly_used: 850, used_this_minute: 10 }] };
+      return { rows: [{ id: 'oa-1', display_name: 'QA OA', quota_per_minute: 10, monthly_quota: 1000, monthly_used: 850, used_this_minute: 10, access_token_checked_at: new Date() }] };
     }
   };
   const unhealthy = await readDeliveryHealth(unhealthyPool, { thresholds: opsThresholds({}) });
@@ -192,6 +193,156 @@ test('delivery health reports alerts without leaking recipient data', async () =
   assert.equal(healthy.ok, true);
   assert.deepEqual(healthy.alerts, []);
   assert.equal(healthy.workerStale, false);
+});
+
+test('an OA whose token was never re-checked becomes an ops alert', async () => {
+  const { readDeliveryHealth, opsThresholds } = await import('../dist/api/opsHealth.js');
+  const now = new Date('2026-11-05T10:00:00.000Z');
+  const poolWith = (checkedAt) => ({
+    async query(sql) {
+      if (sql.includes('from outbox_deliveries')) {
+        return { rows: [{
+          pending: 0, sending: 0, retryable: 0, unknown: 0, sent: 1, failed: 0, skipped: 0, stuck: 0,
+          oldest_pending_seconds: null, last_worker_activity: now, last_worker_heartbeat: now, due_jobs: 0
+        }] };
+      }
+      return { rows: [{ id: 'oa-1', display_name: 'QA OA', quota_per_minute: 10, monthly_quota: 0, monthly_used: 0, used_this_minute: 0, access_token_checked_at: checkedAt }] };
+    }
+  });
+  const readHealth = (checkedAt) => readDeliveryHealth(poolWith(checkedAt), {
+    workspaceId: '00000000-0000-4000-8000-000000000000', now, thresholds: opsThresholds({})
+  });
+
+  const fresh = await readHealth(new Date(now.getTime() - 86_400_000));
+  assert.equal(fresh.quota[0].tokenCheckStale, false);
+  assert.ok(!fresh.alerts.includes('OA_TOKEN_CHECK_STALE'));
+
+  const stale = await readHealth(new Date(now.getTime() - 8 * 86_400_000));
+  assert.equal(stale.quota[0].tokenCheckStale, true);
+  assert.ok(stale.alerts.includes('OA_TOKEN_CHECK_STALE'));
+
+  const never = await readHealth(null);
+  assert.equal(never.quota[0].tokenCheckStale, true, 'a token that was never checked is not assumed fresh');
+  assert.ok(never.alerts.includes('OA_TOKEN_CHECK_STALE'));
+});
+
+test('/health probes the database and fails closed without dropping the smoke keys', async () => {
+  const { isDatabaseReachable } = await import('../dist/api/db.js');
+  assert.equal(await isDatabaseReachable({ query: async () => ({ rows: [] }) }), true);
+  assert.equal(await isDatabaseReachable({ query: async () => { throw new Error('database is down'); } }), false);
+
+  const started = Date.now();
+  assert.equal(await isDatabaseReachable({ query: () => new Promise(() => {}) }, 50), false, 'a hanging probe must not stall /health');
+  assert.ok(Date.now() - started < 1000);
+
+  const server = read('apps/api/src/server.ts');
+  assert.match(server, /app\.get\('\/health', async \(_request, reply\) => \{/);
+  assert.match(server, /reply\.code\(503\)\.send\(\{ ok: false, mode, liveSendEnabled, persistence, db: 'down' \}\)/);
+  assert.match(server, /liveSendEnabled, persistence, db: 'up' \}/);
+  assert.match(server, /if \(!\(await isDatabaseReachable\(healthPool\)\)\)/);
+});
+
+test('worker heartbeat separates an idle system from a dead worker', async () => {
+  const { readDeliveryHealth, opsThresholds } = await import('../dist/api/opsHealth.js');
+  const now = new Date('2026-11-05T10:00:00.000Z');
+  const poolWith = (heartbeatAgeMs, dueJobs) => ({
+    async query(sql) {
+      if (sql.includes('from outbox_deliveries')) {
+        return { rows: [{
+          pending: 0, sending: 0, retryable: 0, unknown: 0, sent: 0, failed: 0, skipped: 0, stuck: 0,
+          oldest_pending_seconds: null,
+          last_worker_activity: new Date(now.getTime() - 3 * 86_400_000),
+          last_worker_heartbeat: heartbeatAgeMs === null ? null : new Date(now.getTime() - heartbeatAgeMs),
+          due_jobs: dueJobs
+        }] };
+      }
+      return { rows: [] };
+    }
+  });
+  const readHealth = (heartbeatAgeMs, dueJobs) => readDeliveryHealth(poolWith(heartbeatAgeMs, dueJobs), {
+    workspaceId: '00000000-0000-4000-8000-000000000000',
+    now,
+    thresholds: opsThresholds({})
+  });
+
+  const deadWithDueWork = await readHealth(11 * 60_000, 1);
+  assert.equal(deadWithDueWork.dueJobs, 1);
+  assert.equal(deadWithDueWork.workerStale, true, 'a stale heartbeat plus a due job means nobody will claim it');
+  assert.ok(deadWithDueWork.alerts.includes('WORKER_STALE'));
+
+  const neverStarted = await readHealth(null, 1);
+  assert.equal(neverStarted.workerStale, true);
+
+  const aliveAndIdle = await readHealth(0, 0);
+  assert.equal(aliveAndIdle.workerStale, false);
+  assert.deepEqual(aliveAndIdle.alerts, [], 'an idle but live worker is not an outage');
+
+  const jobJustBecameDue = await readHealth(0, 1);
+  assert.equal(jobJustBecameDue.workerStale, false, 'a due job that the live worker has not claimed yet is not an alert');
+});
+
+test('worker writes the heartbeat file the container healthcheck reads', async () => {
+  const { writeWorkerHeartbeat, workerHeartbeatFile } = await import('../dist/api/worker.js');
+  assert.equal(workerHeartbeatFile(''), '/tmp/worker-heartbeat');
+  assert.equal(workerHeartbeatFile(' /run/worker-beat '), '/run/worker-beat');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'line-ccc-heartbeat-'));
+  const file = path.join(dir, 'worker-heartbeat');
+  const now = new Date('2026-11-05T10:00:00.000Z');
+  try {
+    assert.equal(writeWorkerHeartbeat(file, now), true);
+    assert.equal(fs.readFileSync(file, 'utf8'), String(Math.floor(now.getTime() / 1000)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(writeWorkerHeartbeat(file, now), false, 'an unwritable heartbeat path must not crash the loop');
+
+  const worker = serviceBlock(read('docker-compose.staging.yml'), 'worker');
+  assert.match(worker, /healthcheck:/);
+  assert.match(worker, /\/tmp\/worker-heartbeat/);
+
+  const source = read('apps/api/src/worker.ts');
+  assert.match(source, /writeWorkerHeartbeat\(heartbeatFile\)/);
+  assert.match(source, /'WORKER_HEARTBEAT','worker'/);
+});
+
+test('scheduled_at is read as Asia/Bangkok from the API and the admin form', async () => {
+  const { assertScheduledAt, assertTimeZone } = await import('../dist/api/validation.js');
+
+  // A datetime-local value has no offset, so it must be read as Bangkok wall clock rather
+  // than in the process zone (UTC inside the container would shift it seven hours).
+  assert.equal(assertScheduledAt('2030-11-05T09:30', 'DRAFT'), '2030-11-05T02:30:00.000Z');
+  assert.equal(assertScheduledAt('2030-11-05 09:30', 'DRAFT'), '2030-11-05T02:30:00.000Z');
+  assert.equal(assertScheduledAt(' 2030-11-05T09:30 ', 'DRAFT'), '2030-11-05T02:30:00.000Z');
+
+  // An explicit Z or offset is the caller's truth and must survive untouched.
+  assert.equal(assertScheduledAt('2030-11-05T09:30:00Z', 'DRAFT'), '2030-11-05T09:30:00.000Z');
+  assert.equal(assertScheduledAt('2030-11-05T09:30:00+07:00', 'DRAFT'), '2030-11-05T02:30:00.000Z');
+  assert.equal(assertScheduledAt('2030-11-05T09:30:00-05:00', 'DRAFT'), '2030-11-05T14:30:00.000Z');
+
+  assert.throws(() => assertScheduledAt('not-a-date', 'DRAFT'), /valid ISO date/);
+  assert.throws(() => assertScheduledAt(1_900_000_000_000, 'DRAFT'), /valid ISO date/);
+  assert.throws(() => assertScheduledAt(new Date(Date.now() - 60_000).toISOString(), 'SCHEDULED'), /in the future/);
+  assert.equal(assertTimeZone('Asia/Bangkok'), 'Asia/Bangkok');
+  assert.throws(() => assertTimeZone('UTC'), /Asia\/Bangkok/);
+
+  const compose = read('docker-compose.staging.yml');
+  const anchor = compose.slice(compose.indexOf('x-app:'), compose.indexOf('\nservices:'));
+  assert.match(anchor, /TZ: \$\{TZ:-Asia\/Bangkok\}/);
+  // The worker's environment map replaces the anchor's rather than merging into it.
+  assert.match(serviceBlock(compose, 'worker'), /TZ: \$\{TZ:-Asia\/Bangkok\}/);
+
+  const admin = read('apps/admin/src/main.tsx');
+  assert.match(admin, /BANGKOK_OFFSET_MS = 7 \* 60 \* 60_000/);
+  assert.match(admin, /\+07:00/);
+  assert.match(admin, /formatBangkok\(scheduledAt\)/);
+  assert.doesNotMatch(admin, /getTimezoneOffset/, 'the operator laptop zone must not decide the schedule');
+
+  const installer = read('deploy/install-backup-cron.sh');
+  assert.match(installer, /timedatectl show -p Timezone --value/);
+  assert.match(installer, /UTC\|Etc\/UTC\) SCHEDULE="30 20 \* \* \*";;/);
+  assert.match(installer, /Asia\/Bangkok\) SCHEDULE="30 3 \* \* \*";;/);
+  assert.match(installer, /neither UTC nor Asia\/Bangkok/);
 });
 
 test('staging smoke passes against a local memory API and stays secret-free', async () => {

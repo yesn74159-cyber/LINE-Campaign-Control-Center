@@ -28,6 +28,10 @@ export async function seedStaging(pool: Pool) {
       const campaign = await client.query<{ id: string }>(`insert into campaigns(workspace_id,slug,name,title,description,image,cta,flex_file,active) values ($1,$2,$3,$4,$5,$6,$7,$8,true) on conflict (workspace_id,slug) do update set name=excluded.name,title=excluded.title,description=excluded.description,image=excluded.image,cta=excluded.cta,flex_file=excluded.flex_file,active=true returning id`, [workspaceId, item.id, item.name, item.title, item.description, item.image, item.cta, item.flexFile]);
       const flex = JSON.parse(await fs.readFile(path.join(root, String(item.flexFile)), 'utf8'));
       await client.query(`insert into campaign_revisions(campaign_id,revision,flex_json,state,created_by) values ($1,1,$2::jsonb,'PUBLISHED','seed') on conflict (campaign_id,revision) do update set flex_json=excluded.flex_json,state='PUBLISHED'`, [campaign.rows[0].id, JSON.stringify(flex)]);
+      // 005 seeds controls before campaigns exist, so a database built from migrations alone would
+      // have no control row and every readiness request would 404. A seeded campaign starts DRAFT:
+      // approval is still a human step, it just has a row to record it on.
+      await client.query(`insert into campaign_controls(workspace_id,campaign_id) values ($1,$2) on conflict (campaign_id) do nothing`, [workspaceId, campaign.rows[0].id]);
     }
     const welcome = await client.query<{ id: string }>(`select r.id from campaign_revisions r join campaigns c on c.id=r.campaign_id where c.slug='welcome' order by r.revision desc limit 1`);
     await client.query(`insert into scheduler_jobs(workspace_id,campaign_revision_id,oa_integration_id,mode,status,scheduled_at,available_at,time_zone,idempotency_key)

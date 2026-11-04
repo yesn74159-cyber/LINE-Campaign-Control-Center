@@ -9,7 +9,6 @@ set -euo pipefail
 DEPLOY_DIR="${DEPLOY_DIR:-/srv/line-ccc-staging}"
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_DIR/backups}"
 SCRIPT="$DEPLOY_DIR/deploy/nightly-backup.sh"
-SCHEDULE="${SCHEDULE:-30 20 * * *}"
 TAG="# line-ccc-nightly-backup"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -27,6 +26,29 @@ fi
 if ! docker info > /dev/null 2>&1; then
   echo "this user cannot reach the docker daemon; the backup would fail every night" >&2
   exit 1
+fi
+
+# The backup should land at 03:30 ICT. cron fires in the host's own zone, so the literal
+# depends on the host: a UTC host needs 20:30 the previous day, a Bangkok host needs 03:30.
+host_zone="$(timedatectl show -p Timezone --value 2> /dev/null || true)"
+if [ -z "${SCHEDULE:-}" ]; then
+  case "$host_zone" in
+    UTC|Etc/UTC) SCHEDULE="30 20 * * *";;
+    Asia/Bangkok) SCHEDULE="30 3 * * *";;
+    "")
+      SCHEDULE="30 20 * * *"
+      echo "WARNING: could not read the host timezone (timedatectl). Assuming UTC; verify the dump lands at 03:30 ICT." >&2
+      ;;
+    *)
+      SCHEDULE="30 20 * * *"
+      echo "WARNING: host timezone is $host_zone, which is neither UTC nor Asia/Bangkok." >&2
+      echo "         cron fires in host time, so 03:30 ICT cannot be expressed for this zone (DST)." >&2
+      echo "         Set it yourself, e.g. SCHEDULE='<min> <hour> * * *' bash deploy/install-backup-cron.sh" >&2
+      ;;
+  esac
+  echo "host timezone: ${host_zone:-unknown} -> backup schedule: $SCHEDULE (target 03:30 ICT)"
+else
+  echo "host timezone: ${host_zone:-unknown}; SCHEDULE override: $SCHEDULE"
 fi
 
 chmod +x "$SCRIPT"

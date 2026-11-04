@@ -68,6 +68,13 @@ before(async () => {
   const oas = await admin.request('/api/oas');
   enabledOa = oas.body.oas.find((oa) => oa.enabled && oa.environment === 'STAGING')?.id;
   assert.ok(enabledOa);
+  // Scheduling now re-checks readiness, so the campaign this suite drives has to be approved.
+  const readiness = await admin.request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`);
+  if (readiness.body.approvalStatus !== 'APPROVED') {
+    await admin.request('/api/campaigns/welcome/validate', { method: 'POST' });
+    const approved = await admin.request('/api/campaigns/welcome/approve', { method: 'POST' });
+    assert.equal(approved.body.approvalStatus, 'APPROVED', JSON.stringify(approved.body));
+  }
 });
 
 after(async () => {
@@ -101,10 +108,12 @@ test('outbox ledger is durable and idempotent across a second worker run', async
 
 test('stale worker lease recovers the matching SENDING outbox row', async () => {
   const job = await createDueJob(admin);
+  // Payload building only accepts a real LINE userId shape, so the stranded row must carry one.
+  const recoveredRecipient = 'U00000000000000000000000000000000';
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   try {
-    await pool.query("update scheduler_jobs set status='SENDING', claimed_at=now()-interval '10 minutes', claimed_by='crashed-worker' where id=$1", [job.id]);
-    await pool.query("insert into outbox_deliveries(workspace_id,scheduler_job_id,oa_integration_id,recipient_key,idempotency_key,line_retry_key,status,attempts,claimed_by,claimed_at) select workspace_id,id,oa_integration_id,'__recovery__',gen_random_uuid(),gen_random_uuid(),'SENDING',1,'crashed-worker',now()-interval '10 minutes' from scheduler_jobs where id=$1", [job.id]);
+    await pool.query("update scheduler_jobs set status='SENDING', claimed_at=now()-interval '20 minutes', claimed_by='crashed-worker' where id=$1", [job.id]);
+    await pool.query("insert into outbox_deliveries(workspace_id,scheduler_job_id,oa_integration_id,recipient_key,idempotency_key,line_retry_key,status,attempts,claimed_by,claimed_at) select workspace_id,id,oa_integration_id,$2,gen_random_uuid(),gen_random_uuid(),'SENDING',1,'crashed-worker',now()-interval '20 minutes' from scheduler_jobs where id=$1", [job.id, recoveredRecipient]);
     const { createPostgresRepository } = await import('../dist/api/repository.js');
     const { MockLineMessagingAdapter } = await import('../dist/api/lineAdapter.js');
     const { runWorkerOnce } = await import('../dist/api/worker.js');
@@ -113,7 +122,7 @@ test('stale worker lease recovers the matching SENDING outbox row', async () => 
     const deliveries = await repo.listOutbox(undefined, job.id);
     assert.equal(result.status, 'completed');
     assert.ok(deliveries.every((delivery) => delivery.status === 'SENT'));
-    assert.ok(deliveries.some((delivery) => delivery.recipientKey === '__recovery__' && delivery.attempts === 2));
+    assert.ok(deliveries.some((delivery) => delivery.recipientKey === recoveredRecipient && delivery.attempts === 2));
   } finally { await pool.end(); }
 });
 
@@ -158,8 +167,10 @@ test('policy is rechecked immediately before transport', async () => {
   try {
     const repo = createPostgresRepository(pool);
     const guardedRepo = Object.create(repo);
-    guardedRepo.markOutboxSending = async (...args) => {
-      const result = await repo.markOutboxSending(...args);
+    // The worker reads policy once when it claims and again for every recipient. Flipping the
+    // switch between those two reads is the race this test has to close.
+    guardedRepo.markJobSending = async (...args) => {
+      const result = await repo.markJobSending(...args);
       const stopped = await admin.request('/api/workspace/kill-switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true, reason: 'Phase 4B race-window test' }) });
       assert.equal(stopped.response.status, 200, JSON.stringify(stopped.body));
       return result;

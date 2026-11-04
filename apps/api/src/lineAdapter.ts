@@ -60,6 +60,10 @@ function transportBody(input: AdapterSendInput) {
 
 function assertProviderResponse(response: TransportResponse) {
   if (response.status >= 200 && response.status < 300) return response;
+  // LINE answers 409 when it has already accepted this x-line-retry-key, which is what a
+  // retry after a crash looks like: the message was delivered. Treating it as a failure
+  // would hand the operator a "failed" row and invite a second, duplicate push.
+  if (response.status === 409) return response;
   const classification = classifyProviderError(response.status);
   const uncertain = response.status >= 500 || response.status === 429;
   throw new ProviderTransportError(response.status, classification.retryable, uncertain, classification.code, response.requestId, response.retryAfterMs || classification.retryAfterMs);

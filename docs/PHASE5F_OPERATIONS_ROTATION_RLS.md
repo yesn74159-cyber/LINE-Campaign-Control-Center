@@ -55,11 +55,14 @@ DATABASE_URL=... npm run ops:health -- --notify
 
 - ส่ง POST JSON เมื่อมี alert เท่านั้น; ถ้าไม่มี alert จะพิมพ์ `{"notified":false,"reason":"no alerts"}` ทาง stderr
 - Payload: `source`, `generatedAt`, `alerts[]`, `counts`, `workerStale`, `oldestPendingSeconds`, `quota[]` (เฉพาะ `monthlyPercent`/`usedThisMinute`/`limitPerMinute`)
-- `OPS_ALERT_FORMAT` เลือกรูปแบบ: `generic` (JSON ข้างต้น), `slack` (`{"text": "..."}`), `discord` (`{"content": "..."}`) — ข้อความสรุปมีเฉพาะ alert codes และ counters
+- `OPS_ALERT_FORMAT` เลือกรูปแบบ: `generic` (JSON ข้างต้น), `slack` (`{"text": "..."}`), `discord` (`{"content": "..."}`), `telegram` (`{chat_id,text,disable_web_page_preview:true}`) — ข้อความสรุปมีเฉพาะ alert codes และ counters
+- **Telegram**: ตั้ง `OPS_ALERT_WEBHOOK_URL=https://api.telegram.org/bot<token>/sendMessage` และ `OPS_TELEGRAM_CHAT_ID=<chat id>`; ถ้าไม่ได้ตั้ง `OPS_ALERT_FORMAT` ระบบจะเดาจาก host ของ URL (`api.telegram.org` → telegram) bot token อยู่ใน `.env.staging` เท่านั้น ไม่พิมพ์ใน log/argv
 - ไม่มี workspace/OA id, ชื่อ OA, recipient key, ข้อความ push, cookie หรือ secret
 - ต้องเป็น HTTPS ยกเว้น loopback สำหรับ test; URL ต้องไม่มี username/password; timeout 5 วินาที, ไม่ follow redirect
 - ถ้าส่งไม่สำเร็จ CLI exit 1 และพิมพ์เฉพาะ `{"notified":false,"status":...}` ไม่พิมพ์ URL
-- แนะนำตั้ง cron/systemd timer ทุก 1 นาทีผ่าน EnvironmentFile แล้วใช้ exit code เพื่อ trigger escalation; ควรมี suppression/dedup ที่ฝั่งปลายทาง เพราะ CLI ไม่เก็บ state
+- `OPS_ALERT_WEBHOOK_URL` ว่าง = พิมพ์ `{"notified":false,"reason":"OPS_ALERT_WEBHOOK_URL is not set"}` (ไม่ throw) แต่ยัง exit 1 เมื่อมี alert
+- **Dedupe**: ถ้าตั้ง `OPS_ALERT_STATE_FILE` (cron ทำผ่าน `deploy/ops-alert.sh`) จะส่งซ้ำเฉพาะเมื่อชุด alert เปลี่ยน หรือชุดเดิมค้างเกิน `OPS_ALERT_REPEAT_MINUTES` (default 60)
+- cron: `bash deploy/install-ops-cron.sh` ติดตั้งงานทุก 5 นาที (`*/5 * * * *`) ที่เรียก `docker compose run --rm --no-deps api node dist/api/cli.js ops --notify` เป็น user `ubuntu` ไม่ใช่ root; log อยู่ที่ `$DEPLOY_DIR/ops-state/ops-alert.log`
 
 ## 3) RLS / GRANT rollout — ข้อเสนอ (ยังไม่ apply)
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { randomBytes } from 'node:crypto';
 import {
-  sealOaSecret, openOaSecret, vaultKey, checkLineBotToken, registerOaConnectRoutes
+  sealOaSecret, openOaSecret, vaultKey, checkLineBotToken, registerOaConnectRoutes, recheckOaAccessToken
 } from '../dist/api/lineOaConnect.js';
 
 const a = '11111111-1111-4111-8111-111111111111';
@@ -132,6 +132,49 @@ test('owner must be active with CSRF; no key means fail closed', async () => {
     const r=await app.inject({method:'POST',url:'/api/workspace/oa-connect',payload});
     assert.equal(r.statusCode,403);
   } finally { await close(); }
+});
+
+test('re-entering credentials must not disable an OA that is already sending', async () => {
+  const {app,calls,close}=harness();
+  try {
+    const r=await app.inject({method:'POST',url:'/api/workspace/oa-connect',headers:{'x-csrf-token':'qa'},payload});
+    assert.equal(r.statusCode,201,r.body);
+    const upsert = calls.find(x=>x.sql.includes('insert into oa_integrations'));
+    const update = upsert.sql.slice(upsert.sql.indexOf('do update'));
+    assert.ok(!update.includes('enabled=false'), 'the upsert must leave enabled to the operator');
+    assert.match(update, /credential_status='REFERENCE_CONFIGURED'/);
+  } finally {await close();}
+});
+
+test('token recheck is read-only and leaves the OA enabled flag alone', async () => {
+  const sealed = sealOaSecret(token, a, oa, 'token', key);
+  const statements = [];
+  const pool = {
+    async query(sql, params = []) {
+      statements.push({ sql, params });
+      if (sql.includes('from oa_credential_vault v')) return { rows: [{ token_sealed: sealed }] };
+      if (sql.includes('select bot_basic_id')) return { rows: [{ bot_basic_id: '@oa123' }] };
+      if (sql.includes('update oa_credential_vault')) return { rows: [{ checked_at: new Date('2026-11-05T10:00:00.000Z') }] };
+      return { rows: [] };
+    }
+  };
+  const basic = async (url, options) => {
+    assert.equal(url, 'https://api.line.me/v2/bot/info');
+    assert.equal(options.headers.Authorization, 'Bearer ' + token);
+    return new Response(JSON.stringify({ basicId: '@oa123', displayName: 'QA LINE OA' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const result = await recheckOaAccessToken(pool, { workspaceId: a, oaId: oa, key, transport: basic, actor: 'ops:cli' });
+  assert.deepEqual(result, { oaId: oa, basicId: '@oa123', displayName: 'QA LINE OA', checkedAt: '2026-11-05T10:00:00.000Z' });
+
+  const oaUpdate = statements.find((item) => item.sql.includes('update oa_integrations'));
+  assert.ok(oaUpdate, 'the check must record last_validated_at');
+  assert.ok(!/enabled|connection_status/.test(oaUpdate.sql), 'a check must not change whether the OA sends');
+  assert.ok(statements.some((item) => item.sql.includes("'OA_TOKEN_RECHECKED'")));
+  assert.ok(!JSON.stringify(statements).includes(token), 'the access token never reaches a statement');
+
+  const wrongBot = async () => new Response(JSON.stringify({ basicId: '@someone-else', displayName: 'Other' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  await assert.rejects(() => recheckOaAccessToken(pool, { workspaceId: a, oaId: oa, key, transport: wrongBot }), /belongs to @someone-else/);
 });
 
 test('existing ownership in different workspace prevents OA hijacking', async () => {

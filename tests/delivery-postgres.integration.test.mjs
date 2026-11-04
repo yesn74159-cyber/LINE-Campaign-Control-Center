@@ -43,9 +43,11 @@ async function seedTenant(targetPool, suffix) {
     "insert into campaign_revisions(campaign_id,revision,flex_json,state,created_by) values ($1,1,$2::jsonb,'PUBLISHED','qa') returning id",
     [campaignId, JSON.stringify(flex('revision one'))]
   )).rows[0].id;
+  // Approval has to name revision one and its hash, exactly like approveCampaign does, or the
+  // readiness gate treats this fixture as an approval of content nobody reviewed.
   await targetPool.query(
-    "insert into campaign_controls(workspace_id,campaign_id,approval_status,validated_at,validated_by,approved_at,approved_by) values ($1,$2,'APPROVED',now(),'qa',now(),'qa')",
-    [workspaceId, campaignId]
+    "insert into campaign_controls(workspace_id,campaign_id,approval_status,validated_at,validated_by,approved_at,approved_by,approved_revision_id,approved_content_hash) select $1,$2,'APPROVED',now(),'qa',now(),'qa',r.id,md5(r.flex_json::text || '|' || c.name || '|' || c.title || '|' || c.image || '|' || c.cta) from campaign_revisions r join campaigns c on c.id=r.campaign_id where r.id=$3",
+    [workspaceId, campaignId, revisionOneId]
   );
   const oaId = (await targetPool.query(
     "insert into oa_integrations(workspace_id,provider_id,basic_id,display_name,environment,enabled,quota_per_minute,monthly_quota,connection_status) values ($1,'qa-provider','@deliveryqa','Delivery QA OA','STAGING',true,5,10,'DRY_RUN_READY') returning id",
@@ -109,9 +111,15 @@ test('PostgreSQL delivery pipeline keeps the frozen revision, filters consent, a
   const now = new Date();
   const job = await createScheduledJob(tenant, now);
   assert.equal(job.campaignRevisionId, tenant.revisionOneId);
-  await pool.query(
-    "insert into campaign_revisions(campaign_id,revision,flex_json,state,created_by) values ($1,2,$2::jsonb,'PUBLISHED','qa')",
+  const revisionTwoId = (await pool.query(
+    "insert into campaign_revisions(campaign_id,revision,flex_json,state,created_by) values ($1,2,$2::jsonb,'PUBLISHED','qa') returning id",
     [tenant.campaignId, JSON.stringify(flex('revision two'))]
+  )).rows[0].id;
+  // Saving a card invalidates its approval, so the operator approves revision two here. The job
+  // below was created against revision one and must still send exactly that content.
+  await pool.query(
+    "update campaign_controls cc set approved_revision_id=r.id, approved_content_hash=md5(r.flex_json::text || '|' || c.name || '|' || c.title || '|' || c.image || '|' || c.cta) from campaign_revisions r join campaigns c on c.id=r.campaign_id where r.id=$2 and cc.campaign_id=$1",
+    [tenant.campaignId, revisionTwoId]
   );
 
   const captured = [];
@@ -197,6 +205,26 @@ test('quota reservations are atomic, per-minute, and released without underflow'
   await assert.rejects(
     () => repository.reserveDeliverySlot({ workspaceId: tenant.workspaceId, oaId: tenant.monthlyOaId, count: false, now }),
     (error) => error.code === 'QUOTA_EXCEEDED'
+  );
+});
+
+test('a monthly counter left over from a previous month is reset before the first delivery', async (t) => {
+  if (skipWithoutDatabase(t)) return;
+  const tenant = await seedTenant(pool, `m_${Date.now()}`);
+  // The OA starts at 1/1 for this month; pretend that usage happened last month.
+  await pool.query("update oa_integrations set monthly_used=1, quota_period_start=date_trunc('month', now() - interval '1 month')::date where id=$1", [tenant.monthlyOaId]);
+  const now = new Date();
+
+  const reservation = await repository.reserveDeliverySlot({ workspaceId: tenant.workspaceId, oaId: tenant.monthlyOaId, count: true, now });
+  assert.equal(reservation.counted, true);
+  const row = (await pool.query("select monthly_used, quota_period_start = date_trunc('month', now())::date as current_period from oa_integrations where id=$1", [tenant.monthlyOaId])).rows[0];
+  assert.equal(row.monthly_used, 1, 'the stale counter must be replaced, not added to');
+  assert.equal(row.current_period, true, 'the period must follow the database month');
+
+  await assert.rejects(
+    () => repository.reserveDeliverySlot({ workspaceId: tenant.workspaceId, oaId: tenant.monthlyOaId, count: true, now }),
+    (error) => error.code === 'QUOTA_EXCEEDED',
+    'the fresh month still enforces monthly_quota'
   );
 });
 

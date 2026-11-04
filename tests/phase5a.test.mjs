@@ -124,3 +124,44 @@ test('login attempts are rate limited per account and address', async () => {
   }
   assert.equal(lastStatus, 429);
 });
+
+test('a saved revision invalidates approval until the new card is checked and approved again', async () => {
+  const campaigns = await repo.listCampaigns();
+  const welcome = campaigns.find((campaign) => campaign.id === 'welcome');
+  assert.ok(welcome?.flexJson);
+  const saved = await repo.createRevision('welcome', { ...welcome.flexJson, altText: `${welcome.flexJson.altText || 'welcome'} approval-binding` }, 'qa@memory.local');
+  const blocked = await repo.getCampaignReadiness('welcome', 'memory-workspace', 'oa-staging-primary');
+  assert.equal(blocked.approvalStatus, 'DRAFT');
+  assert.equal(blocked.canSchedule, false);
+  assert.ok(blocked.blockers.includes('Campaign approval is required'));
+  await assert.rejects(repo.addJob({ campaignId: 'welcome', oaId: 'oa-staging-primary', scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), timeZone: 'Asia/Bangkok', status: 'SCHEDULED', workspaceId: 'memory-workspace', actor: 'qa@memory.local' }), /Campaign approval is required/);
+  assert.equal((await repo.validateCampaign('welcome', 'memory-workspace', 'qa@memory.local')).approvalStatus, 'VALIDATED');
+  const approved = await repo.approveCampaign('welcome', 'memory-workspace', 'qa@memory.local');
+  assert.equal(approved.approvalStatus, 'APPROVED');
+  assert.equal(approved.canSchedule, true);
+  const job = await repo.addJob({ campaignId: 'welcome', oaId: 'oa-staging-primary', scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), timeZone: 'Asia/Bangkok', status: 'SCHEDULED', workspaceId: 'memory-workspace', actor: 'qa@memory.local' });
+  assert.equal(job.campaignRevisionId, saved.id);
+  // Checking an already approved campaign must not silently drop the approval.
+  const revalidated = await repo.validateCampaign('welcome', 'memory-workspace', 'qa@memory.local');
+  assert.equal(revalidated.approvalStatus, 'APPROVED');
+  assert.equal(revalidated.canSchedule, true);
+});
+
+test('scheduling, resuming and retrying re-check readiness instead of trusting the job row', async () => {
+  const actor = 'qa@memory.local';
+  const draft = await repo.addJob({ campaignId: 'news', oaId: 'oa-staging-primary', scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), timeZone: 'Asia/Bangkok', status: 'DRAFT', workspaceId: 'memory-workspace', actor });
+  // A draft can sit for days; saving a new card after it was created must not let it be scheduled.
+  const news = (await repo.listCampaigns()).find((campaign) => campaign.id === 'news');
+  await repo.createRevision('news', { ...news.flexJson, altText: `${news.flexJson.altText || 'news'} transition gate` }, actor);
+  await assert.rejects(repo.scheduleJob(draft.id, actor, 'memory-workspace'), /Campaign approval is required/);
+  await repo.validateCampaign('news', 'memory-workspace', actor);
+  await repo.approveCampaign('news', 'memory-workspace', actor);
+  assert.equal((await repo.scheduleJob(draft.id, actor, 'memory-workspace')).status, 'SCHEDULED');
+  // A kill switch flipped after the job exists has to stop resume, not just creation.
+  await repo.pauseJob(draft.id, actor, 'memory-workspace');
+  await repo.setCampaignKillSwitch('news', 'memory-workspace', true, 'transition gate test', actor);
+  await assert.rejects(repo.resumeJob(draft.id, actor, 'memory-workspace'), /Campaign kill switch is active/);
+  await assert.rejects(repo.retryJob(draft.id, actor, 'memory-workspace'), /Campaign kill switch is active/);
+  await repo.setCampaignKillSwitch('news', 'memory-workspace', false, 'transition gate test cleanup', actor);
+  assert.equal((await repo.resumeJob(draft.id, actor, 'memory-workspace')).status, 'SCHEDULED');
+});

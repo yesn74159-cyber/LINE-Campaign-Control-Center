@@ -25,7 +25,7 @@ Make DRY_RUN and LIVE run the same outbox pipeline. DRY_RUN uses the mock transp
 
 `runWorkerOnce` in `apps/api/src/worker.ts`:
 
-1. `recoverStaleJobs` releases claims older than the 60s lease and returns their outbox rows to `RETRYABLE`.
+1. `recoverStaleJobs` releases claims older than the lease (`WORKER_LEASE_MS`, default **15 minutes**, floor 60s) and returns their outbox rows to `RETRYABLE`. It runs **once per worker start**, not on every poll: a batch that takes longer than the lease would otherwise be reclaimed by the same loop while it is still sending, which is a duplicate message. Set `recoverStale: false` to skip it entirely.
 2. `claimDueJob` claims one due job (`SCHEDULED`, `RETRYABLE`, `QUEUED`) with `for update skip locked`, incrementing attempts.
 3. `getCampaignReadiness` validates approval, kill switches, OA state, consent count, and quota; `validateDispatchPolicy` runs with `allowLive` only for LIVE jobs.
 4. `markJobSending`, then `prepareOutbox` inserts one delivery per opted-in, unblocked customer scoped to the job's OA provider. Duplicate recipients are deduplicated by `(scheduler_job_id, recipient_key)`; when no eligible recipient exists it inserts a single `__campaign__` preview row.
@@ -37,7 +37,7 @@ Make DRY_RUN and LIVE run the same outbox pipeline. DRY_RUN uses the mock transp
    - `adapter.send`; on success `markOutboxCompleted` with provider status and request ID.
 6. On failure the slot is released unless the error is a `ProviderTransportError` marked `uncertain`. The job becomes `RETRYABLE` with a delay or `FAILED`; the delivery becomes `RETRYABLE`, `FAILED`, or `UNKNOWN` (see below). `markJobCompleted` closes the job with `WORKER_COMPLETED`.
 
-The outbox `line_retry_key` (generated once per delivery) is sent as `X-Line-Retry-Key`, so a retry is idempotent at the provider.
+The outbox `line_retry_key` (generated once per delivery) is sent as `X-Line-Retry-Key`, so a retry is idempotent at the provider. **HTTP 409 counts as success** (`providerStatus=409`, `classifyProviderError` name `PROVIDER_RETRY_KEY_ACCEPTED`): LINE answers 409 when that retry key was already accepted, which is exactly the send-then-crash case — recording it as `FAILED` would show the operator a failure and invite a second, duplicate push.
 
 ## Access-token handling
 

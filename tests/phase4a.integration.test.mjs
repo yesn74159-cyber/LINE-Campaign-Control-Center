@@ -64,10 +64,37 @@ test('campaign readiness enforces Validate then Approve and all three kill switc
   const initial = await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`);
   assert.equal(initial.response.status, 200);
   assert.equal(initial.body.approvalStatus, 'APPROVED');
+  // Validate never demotes an approved campaign, so approval is invalidated by saving new
+  // content instead: the fresh revision has to be checked and approved on its own.
+  const campaigns = await request('/api/campaigns');
+  const original = campaigns.body.campaigns.find((campaign) => campaign.id === 'welcome').flexJson;
+  // The card is read back with whatever origin this host uses; a disposable DB defaults to
+  // http and the validator only accepts https, so the test upgrades every link it re-saves.
+  const upgradeLinks = (value) => Array.isArray(value) ? value.map(upgradeLinks) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, upgradeLinks(nested)])) : typeof value === 'string' ? value.replace(/^http:\/\//, 'https://') : value;
+  const edited = { ...upgradeLinks(original), altText: `${original.altText} Phase4A` };
+  const saved = await request('/api/campaigns/welcome/revisions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flexJson: edited }) });
+  assert.equal(saved.response.status, 201, JSON.stringify(saved.body));
+  const blocked = await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`);
+  assert.equal(blocked.body.approvalStatus, 'DRAFT');
+  assert.equal(blocked.body.canSchedule, false);
+  assert.ok(blocked.body.blockers.includes('Campaign approval is required'));
+  // A draft created while the campaign was approved must not be schedulable once the card changed.
+  const draftJob = await request('/api/scheduler/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ campaignId: 'welcome', oaId: enabledOa, scheduledAt: new Date(Date.now() + 3_600_000).toISOString(), status: 'DRAFT' }) });
+  assert.equal(draftJob.response.status, 201, JSON.stringify(draftJob.body));
+  const refused = await request(`/api/scheduler/jobs/${draftJob.body.id}/schedule`, { method: 'POST' });
+  assert.equal(refused.response.status, 400, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /Campaign approval is required/);
   const validated = await request('/api/campaigns/welcome/validate', { method: 'POST' });
   assert.equal(validated.body.approvalStatus, 'VALIDATED');
   const approved = await request('/api/campaigns/welcome/approve', { method: 'POST' });
   assert.equal(approved.body.approvalStatus, 'APPROVED');
+  const scheduled = await request(`/api/scheduler/jobs/${draftJob.body.id}/schedule`, { method: 'POST' });
+  assert.equal(scheduled.response.status, 200, JSON.stringify(scheduled.body));
+  assert.equal(scheduled.body.status, 'SCHEDULED');
+  await request(`/api/scheduler/jobs/${draftJob.body.id}/pause`, { method: 'POST' });
+  const revalidated = await request('/api/campaigns/welcome/validate', { method: 'POST' });
+  assert.equal(revalidated.body.approvalStatus, 'APPROVED');
+  assert.equal(revalidated.body.canSchedule, true);
   const oaStop = await request(`/api/oas/${enabledOa}/kill-switch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true, reason: 'Phase 4A kill switch test' }) });
   assert.equal(oaStop.body.killSwitch, true);
   assert.equal((await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`)).body.canSchedule, false);
@@ -79,4 +106,8 @@ test('campaign readiness enforces Validate then Approve and all three kill switc
   const campaignStop = await request('/api/campaigns/welcome/kill-switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true, reason: 'Phase 4A campaign switch test' }) });
   assert.equal(campaignStop.body.campaignKillSwitch, true);
   assert.equal((await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`)).body.canSchedule, false);
+  // The paused job was paused while healthy; resuming it under the kill switch must still refuse.
+  const blockedResume = await request(`/api/scheduler/jobs/${draftJob.body.id}/resume`, { method: 'POST' });
+  assert.equal(blockedResume.response.status, 400, JSON.stringify(blockedResume.body));
+  assert.match(blockedResume.body.error, /Campaign kill switch is active/);
 });

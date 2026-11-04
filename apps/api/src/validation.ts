@@ -22,9 +22,15 @@ export function assertSchedulerStatus(value: unknown) {
   return (value || 'SCHEDULED') as 'DRAFT' | 'SCHEDULED';
 }
 
+const HAS_EXPLICIT_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
 export function assertScheduledAt(value: unknown, status: 'DRAFT' | 'SCHEDULED') {
   if (typeof value !== 'string') throw new Error('scheduledAt must be a valid ISO date');
-  const parsed = new Date(value);
+  const input = value.trim();
+  // A datetime-local value carries no offset, and `new Date` would resolve it in the
+  // process zone (UTC inside the container), shifting every Bangkok schedule 7 hours.
+  const normalized = HAS_EXPLICIT_OFFSET.test(input) ? input : `${input.replace(' ', 'T')}+07:00`;
+  const parsed = new Date(normalized);
   if (Number.isNaN(parsed.valueOf())) throw new Error('scheduledAt must be a valid ISO date');
   if (status === 'SCHEDULED' && parsed.getTime() <= Date.now()) throw new Error('scheduledAt must be in the future');
   return parsed.toISOString();

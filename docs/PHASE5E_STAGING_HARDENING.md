@@ -62,17 +62,30 @@ Internet → Caddy 80/443 (TLS, HSTS)
 DATABASE_URL=... npm run ops:health   # exit 1 เมื่อมี alert
 ```
 
-Response มี `counts`, `oldestPendingSeconds`, `lastWorkerActivity`, `workerStale`, `quota[]`, `alerts[]`, `ok` — เป็น aggregate เท่านั้น ไม่มี recipient key หรือ payload
+Response มี `counts`, `oldestPendingSeconds`, `lastWorkerActivity`, `lastWorkerHeartbeat`, `dueJobs`, `workerStale`, `quota[]`, `alerts[]`, `ok` — เป็น aggregate เท่านั้น ไม่มี recipient key หรือ payload
+
+`/health` ตรวจ DB จริง (`select 1` ไม่เกิน 1.5 วินาที): ตอบ `200 {ok:true, db:'up'}` เมื่อปกติ และ `503 {ok:false, db:'down'}` เมื่อ DB ต่อไม่ได้ — คีย์ `ok/mode/liveSendEnabled/persistence` คงเดิมเพราะ smoke ใช้ตรวจ
+
+worker ไม่ได้เปิดพอร์ต: ทุกลูปจะเขียน epoch seconds ลง `WORKER_HEARTBEAT_FILE` (default `/tmp/worker-heartbeat`, เป็น tmpfs) ให้ compose healthcheck อ่าน และเขียน `audit_log` action `WORKER_HEARTBEAT` ทุก 5 นาทีเพื่อให้ `delivery-health` เห็น `lastWorkerHeartbeat`
 
 | Alert | ความหมาย | การทำงาน |
 | --- | --- | --- |
 | `UNKNOWN_DELIVERIES` | มี outbox ที่ผลไม่แน่นอนจาก 429/5xx | ตรวจกับ LINE ด้วยตนเองแล้ว reconcile ผ่าน Admin |
 | `STUCK_DELIVERIES` | PENDING/SENDING/RETRYABLE เก่ากว่า `OPS_STUCK_MINUTES` | ตรวจ worker heartbeat และ lease |
-| `WORKER_STALE` | มีงานค้างแต่ไม่มี audit activity เกิน `OPS_WORKER_STALE_MINUTES` | restart worker / ตรวจ DB connectivity |
+| `WORKER_STALE` | heartbeat เก่าเกิน `OPS_WORKER_STALE_MINUTES` ขณะมี outbox ค้างหรือมี job ถึงเวลา (หรือ outbox ค้างแต่ไม่มี audit activity) | restart worker / ตรวจ DB connectivity |
 | `QUOTA_NEAR_LIMIT` | monthlyUsed ≥ `OPS_QUOTA_WARN_PERCENT` | ลด campaign หรือรอรอบเดือนใหม่ |
 | `OA_RATE_LIMIT_REACHED` | usedThisMinute ≥ quotaPerMinute | ลด concurrency/ตรวจ scheduler |
 
-แนะนำให้ตั้ง cron/systemd timer เรียก CLI ทุก 1 นาทีผ่าน EnvironmentFile แล้วแจ้งเตือนเมื่อ exit code ≠ 0 (ยังไม่ผูกผู้ให้บริการแจ้งเตือนใด ๆ ในเฟสนี้)
+ติดตั้งตัวเรียกทุก 5 นาทีได้ด้วย `bash deploy/install-ops-cron.sh` (มี dedupe ฝั่ง host ผ่าน `OPS_ALERT_STATE_FILE` และ Telegram ใช้ `OPS_ALERT_CHANNEL=telegram`) — รายละเอียดอยู่ใน `docs/PHASE5F_OPERATIONS_ROTATION_RLS.md`
+
+## Timezone
+
+เวลาทั้งระบบตีความด้วย `Asia/Bangkok` (UTC+7) สามจุดที่ต้องตรงกัน:
+
+1. **Container** — `docker-compose.staging.yml` ให้ `TZ=${TZ:-Asia/Bangkok}` กับ api และ worker (worker มี `environment:` ของตัวเองจึงต้องประกาศซ้ำ ไม่ merge กับ anchor)
+2. **API** — `assertScheduledAt` (`apps/api/src/validation.ts`) เติม `+07:00` ให้ค่าที่ไม่มี offset (เช่น `2030-11-05T09:30` จาก `datetime-local`) ก่อน parse จึงไม่ขึ้นกับ timezone ของ process; ค่าที่มี `Z` หรือ offset อยู่แล้วถูกใช้ตามที่ผู้เรียกส่งมา
+3. **Admin UI** — ช่องวันเวลาแสดงนาฬิกาแบบ Bangkok เสมอ (`bangkokDateTimeValue`) และส่งกลับพร้อม `+07:00` (`parseBangkokInput`) ไม่ใช้ timezone ของเครื่องผู้ปฏิบัติงาน
+
 
 ## Smoke, backup, restore, audit
 
@@ -149,7 +162,7 @@ bash deploy/install-backup-cron.sh --run-now
 5. เขียน `<file>.sha256` แล้ว `sha256sum -c --strict` ก่อนเปลี่ยนสถานะเป็นไฟล์ทางการ พร้อมบันทึกแถว `OK`/`FAIL` ลง `backups/backup.log`
 6. เก็บไฟล์ล่าสุด `KEEP` ชุด (ค่าเริ่มต้น 14) เฉพาะ prefix `nightly-` — dump ที่ตั้งชื่อเองอย่าง `pre014-*`, `drill-*` จะไม่ถูกลบ
 
-กำหนดเวลาเป็น `30 20 * * *` (UTC) คือ 03:30 น. เวลาไทย แก้ได้ด้วย `SCHEDULE="0 4 * * *" bash deploy/install-backup-cron.sh`
+กำหนดเวลาเป้าหมายคือ **03:30 น. เวลาไทย** แต่ cron ยิงตาม timezone ของ host ตัว installer จึงอ่าน `timedatectl` ก่อน: host `UTC` ได้ `30 20 * * *` (20:30 ของวันก่อนหน้า), host `Asia/Bangkok` ได้ `30 3 * * *`; zone อื่นจะได้คำเตือนว่า 03:30 ICT แบบคงที่เขียนไม่ได้เพราะ DST ให้ตั้งเองด้วย `SCHEDULE="..." bash deploy/install-backup-cron.sh`
 
 ข้อจำกัดที่ต้องพูดตรง ๆ: **นี่คือ backup บนเครื่องเดียว** กันกรณี deploy พังหรือตารางหาย แต่ไม่กันกรณี VM หาย การย้ายสำเนาออกนอก VM ยังเป็นขั้นตอนแยก (`docker compose cp` หรือ scp จาก `backups/`) และยังไม่ตั้งอัตโนมัติ
 
@@ -191,6 +204,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\offsite-backup.ps1
 - [x] cloud read-only audit กับ staging จริง (2026-11-01): migrations 001–012 ครบ, 25 ตารางครบ ไม่มีแปลกปลอม, RLS เปิดเฉพาะ 3 ตาราง line_customer_* แบบ 0 policy, role line_ccc เป็น superuser+BYPASSRLS (posture เดิมที่ Tier A/B จะ tighten), FK ไร้ leading index 25 ตัว
 - [x] backup/restore drill บน staging จริง (2026-11-01): dump 93,599 bytes ผ่าน PGDMP+sha256, restore เข้า drill DB แล้วนับแถวตรงกับ live เป๊ะ ก่อน drop
 - [x] nightly backup script + cron installer (2026-11-04): ซ้อมครบทั้ง pass/fail/rotation/restore บน Docker ในเครื่อง ตาม runbook ข้างบน
+- [x] timezone ตรงสามชั้น (2026-11-05): api/worker ได้ `TZ=Asia/Bangkok`, `assertScheduledAt` เติม `+07:00` ให้ค่าที่ไม่มี offset, Admin UI อ่าน/เขียนเวลาเป็น Bangkok เสมอ, และ custodian cron อ่าน `timedatectl` ก่อนเลือก `30 20 * * *` (UTC) หรือ `30 3 * * *` (ICT)
 - [x] cron ติดตั้งจริงบน staging VM (2026-11-04, `a1e59c5`): `30 20 * * *`, proof run เขียน `nightly-20261104T113014Z.dump` = 123,491 bytes, log `nightly OK bytes=123491 tables=27`, `sha256sum -c --strict` = OK, `systemctl is-active/is-enabled cron` = active/enabled, dump เก่า `pre014-*`/`post013-*` ยังอยู่ครบ
 - [x] สำเนาออกนอก VM ด้วย `deploy/offsite-backup.ps1` (2026-11-04, `72164ff`): ดึง dump + sidecar, ตรวจ hash ตรง, และซ้อม restore สำเนานั้นใน postgres container ชั่วคราว (exit 0, stderr 0, 27 ตาราง, ledger 001–014, `line_customers=1`, `audit_log=117`)
 - [x] proposal Tier C (`db/proposals/015_tier_c_app_role.sql` + `verify-tier-c.sql`, 2026-11-04): ซ้อมบน disposable DB ครบทั้ง role ใหม่, 27 policies, app จริงรันด้วย `line_ccc_app` แล้ว smoke ผ่าน 16/16, owner ยัง migrate/dump/restore ได้, rollback รันจริงหนึ่งรอบ — รายละเอียดใน [PHASE5F](PHASE5F_OPERATIONS_ROTATION_RLS.md)

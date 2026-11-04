@@ -10,6 +10,10 @@ x-app: &app
     target: api
   env_file:
     - .env.staging
+  # Log timestamps and any Date constructed from a local string must land in the same
+  # zone the scheduler promises (Asia/Bangkok), not whatever the image defaults to.
+  environment:
+    TZ: ${TZ:-Asia/Bangkok}
   init: true
   restart: unless-stopped
   read_only: true
@@ -66,9 +70,18 @@ services:
     <<: *app
     container_name: line-ccc-worker-staging
     command: ["node", "dist/api/worker.js"]
-    # No ports, no healthcheck endpoint: liveness is watched through the
-    # WORKER_STALE alert on /api/ops/delivery-health.
+    # No ports: the loop writes epoch seconds to /tmp/worker-heartbeat, which is a tmpfs
+    # mount, and the healthcheck reads it. The API side of the same signal is the
+    # WORKER_HEARTBEAT audit row behind WORKER_STALE on /api/ops/delivery-health.
+    healthcheck:
+      test: ["CMD-SHELL", "ts=$(cat /tmp/worker-heartbeat 2>/dev/null || echo 0); [ $(( $(date +%s) - ts )) -lt 180 ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
+      # This map replaces the anchor's, so TZ has to be repeated here.
+      TZ: ${TZ:-Asia/Bangkok}
       # The worker follows the host release gate, so one .env.staging switch can be
       # used to rehearse and then test a LIVE campaign. Each job still picks its own
       # transport and fails closed when the gate is off; the webhook stays off here.

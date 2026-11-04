@@ -75,6 +75,24 @@ test('Flex revision survives API restart and invalid Flex is blocked', async () 
   await request('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.STAGING_ADMIN_EMAIL || 'admin@staging.local', password }) });
   const revisions = await request('/api/campaigns/welcome/revisions');
   assert.ok(revisions.body.revisions.some((revision) => revision.id === revisionId && revision.flexJson.altText.endsWith('Phase2')));
+  // Saving a revision is new, unreviewed content: the approval that covered the previous
+  // card must not carry over, and scheduling stays blocked until the new one is approved.
+  const oas = await request('/api/oas');
+  const oaId = oas.body.oas.find((oa) => oa.enabled).id;
+  const blocked = await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(oaId)}`);
+  assert.equal(blocked.body.approvalStatus, 'DRAFT');
+  assert.equal(blocked.body.canSchedule, false);
+  assert.ok(blocked.body.blockers.includes('Campaign approval is required'));
+  const rejected = await request('/api/scheduler/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ campaignId: 'welcome', oaId, scheduledAt: new Date(Date.now() + 3600000).toISOString() }) });
+  assert.equal(rejected.response.status, 400);
+  assert.match(rejected.body.error, /Campaign approval is required/);
+  const validated = await request('/api/campaigns/welcome/validate', { method: 'POST' });
+  assert.equal(validated.response.status, 200, JSON.stringify(validated.body));
+  assert.equal(validated.body.approvalStatus, 'VALIDATED');
+  const approved = await request('/api/campaigns/welcome/approve', { method: 'POST' });
+  assert.equal(approved.response.status, 200, JSON.stringify(approved.body));
+  assert.equal(approved.body.approvalStatus, 'APPROVED');
+  assert.equal(approved.body.canSchedule, true);
 });
 
 test('viewer RBAC cannot create a Flex revision', async () => {

@@ -5,7 +5,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import { createSessionToken, DUMMY_PASSWORD_HASH, verifyPassword } from './auth.js';
-import { createDatabase } from './db.js';
+import { createDatabase, isDatabaseReachable } from './db.js';
 import { createPostgresRepository, createMemoryRepository, type Repository } from './repository.js';
 import { assertControlReason, assertEmail, assertFlexJson, assertOaMetadata, assertPassword, assertScheduledAt, assertSchedulerStatus, assertTimeZone, can } from './validation.js';
 import type { AdminUser } from './types.js';
@@ -97,7 +97,18 @@ export function buildApp(injectedRepository?: Repository) {
     registerReferralRoutes(app, pool, authenticate, requireCsrf);
     registerLineLoginRoutes(app, new PostgresLineLoginStore(pool), createLineLoginConfig());
   }
-  app.get('/health', async () => ({ ok: true, mode: (process.env.APP_MODE || 'DRY_RUN').toUpperCase(), liveSendEnabled: isLiveSendEnabled(), persistence: repo.kind }));
+  // Liveness must include the database: a pool whose connections are dead still answers
+  // HTTP, and a green /health in that state hides a total delivery outage. The probe is
+  // capped so a saturated pool cannot stall the container healthcheck.
+  app.get('/health', async (_request, reply) => {
+    const mode = (process.env.APP_MODE || 'DRY_RUN').toUpperCase();
+    const liveSendEnabled = isLiveSendEnabled();
+    const persistence = repo.kind;
+    const healthPool = selected.database?.pool;
+    if (!healthPool) return { ok: true, mode, liveSendEnabled, persistence, db: 'not_configured' };
+    if (!(await isDatabaseReachable(healthPool))) return reply.code(503).send({ ok: false, mode, liveSendEnabled, persistence, db: 'down' });
+    return { ok: true, mode, liveSendEnabled, persistence, db: 'up' };
+  });
   // The LIFF id is public (it appears in every share link) but the Admin bundle must not be
   // rebuilt when the operator registers the LIFF app, so the id is read from the server here.
   // oaUrl exists because a Flex button carries only the bare LIFF url: once a card is shared it

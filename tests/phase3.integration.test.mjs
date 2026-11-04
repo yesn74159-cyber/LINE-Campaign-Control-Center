@@ -49,6 +49,13 @@ before(async () => {
   const oas = await request('/api/oas');
   enabledOa = oas.body.oas.find((oa) => oa.enabled && oa.environment === 'STAGING')?.id;
   assert.ok(enabledOa);
+  // Scheduling now re-checks readiness, so the campaign this suite drives has to be approved.
+  const readiness = await request(`/api/campaigns/welcome/readiness?oaId=${encodeURIComponent(enabledOa)}`);
+  if (readiness.body.approvalStatus !== 'APPROVED') {
+    await request('/api/campaigns/welcome/validate', { method: 'POST' });
+    const approved = await request('/api/campaigns/welcome/approve', { method: 'POST' });
+    assert.equal(approved.body.approvalStatus, 'APPROVED', JSON.stringify(approved.body));
+  }
 });
 
 after(() => child?.kill());

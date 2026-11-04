@@ -9,7 +9,10 @@ const root = process.cwd();
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 const { sealOaSecret, openOaSecret } = await import('../dist/api/lineOaConnect.js');
 const { rotationKeys, rotateVault } = await import('../dist/api/vaultRotate.js');
-const { buildOpsAlert, buildOpsAlertBody, alertWebhookUrl, opsAlertMessage, opsAlertFormat, sendOpsAlert } = await import('../dist/api/opsNotify.js');
+const {
+  buildOpsAlert, buildOpsAlertBody, alertWebhookUrl, opsAlertMessage, opsAlertFormat, opsAlertFormatFor,
+  opsAlertSignature, opsTelegramChatId, sendOpsAlert, shouldSendOpsAlert
+} = await import('../dist/api/opsNotify.js');
 
 const workspaceA = '11111111-1111-4111-8111-111111111111';
 const workspaceB = '22222222-2222-4222-8222-222222222222';
@@ -199,12 +202,68 @@ test('alert formats for chat channels stay aggregate-only', () => {
   assert.equal(discord.content, message);
   assert.equal(opsAlertFormat(undefined), 'generic');
   assert.equal(opsAlertFormat('Slack'), 'slack');
-  assert.throws(() => opsAlertFormat('email'), /generic, slack or discord/);
+  assert.equal(opsAlertFormat('Telegram'), 'telegram');
+  assert.throws(() => opsAlertFormat('email'), /generic, slack, discord or telegram/);
   for (const serialized of [message, JSON.stringify(slack), JSON.stringify(discord)]) {
     assert.ok(!serialized.includes('Secret OA Name'));
     assert.ok(!serialized.includes('secret-oa-id'));
     assert.ok(!/U[a-z0-9]{32}/.test(serialized));
   }
+});
+
+test('telegram alerts use the bot payload and never carry identifiers', async () => {
+  assert.equal(opsAlertFormatFor('https://api.telegram.org/bot123:abc/sendMessage'), 'telegram');
+  assert.equal(opsAlertFormatFor('https://hooks.slack.com/services/x'), 'generic');
+  assert.equal(opsAlertFormatFor('https://api.telegram.org/bot123/sendMessage', 'slack'), 'slack', 'an explicit format wins');
+  assert.equal(opsTelegramChatId(''), null);
+  assert.equal(opsTelegramChatId(' -1001234567890 '), '-1001234567890');
+  assert.equal(opsTelegramChatId('@ops_channel'), '@ops_channel');
+  assert.throws(() => opsTelegramChatId('not a chat'), /chat id/);
+
+  const body = buildOpsAlertBody('telegram', healthFixture, '-100');
+  assert.deepEqual(Object.keys(body).sort(), ['chat_id', 'disable_web_page_preview', 'text']);
+  assert.equal(body.chat_id, '-100');
+  assert.equal(body.disable_web_page_preview, true);
+  assert.match(body.text, /STUCK_DELIVERIES/);
+  assert.throws(() => buildOpsAlertBody('telegram', healthFixture), /OPS_TELEGRAM_CHAT_ID/);
+
+  let captured = null;
+  const transport = async (_url, init) => {
+    captured = JSON.parse(init.body);
+    return { ok: true, status: 200 };
+  };
+  const delivered = await sendOpsAlert('https://api.telegram.org/bot123/sendMessage', healthFixture, { transport, format: 'telegram', chatId: '-100' });
+  assert.deepEqual(delivered, { delivered: true, status: 200 });
+  assert.equal(captured.chat_id, '-100');
+  assert.ok(!JSON.stringify(captured).includes('Secret OA Name'));
+  assert.ok(!JSON.stringify(captured).includes('secret-oa-id'));
+  const missingChat = await sendOpsAlert('https://api.telegram.org/bot123/sendMessage', healthFixture, { transport, format: 'telegram' });
+  assert.deepEqual(missingChat, { delivered: false, status: null });
+});
+
+test('a standing alert set is not re-sent on every five-minute pass', () => {
+  const now = new Date('2026-11-05T10:00:00.000Z');
+  const state = { signature: opsAlertSignature(healthFixture), notifiedAt: '2026-11-05T09:30:00.000Z' };
+  assert.deepEqual(shouldSendOpsAlert(healthFixture, null, { now }), { send: true });
+  assert.deepEqual(shouldSendOpsAlert(healthFixture, state, { now }), { send: false, reason: 'same alerts already notified' });
+  assert.equal(shouldSendOpsAlert(healthFixture, state, { now, repeatMs: 20 * 60_000 }).send, true);
+  assert.equal(shouldSendOpsAlert(healthFixture, { ...state, notifiedAt: 'not-a-date' }, { now }).send, true);
+  assert.equal(shouldSendOpsAlert({ ...healthFixture, alerts: ['WORKER_STALE'] }, state, { now }).send, true);
+  assert.deepEqual(shouldSendOpsAlert({ ...healthFixture, alerts: [] }, null, { now }), { send: false, reason: 'no alerts' });
+});
+
+test('ops cron runs the CLI every five minutes with a host-side dedupe state', () => {
+  const cli = read('apps/api/src/cli.ts');
+  assert.match(cli, /shouldSendOpsAlert\(health, statePath \? readAlertState\(statePath\) : null\)/);
+  assert.match(cli, /OPS_ALERT_WEBHOOK_URL is not set/);
+  const script = read('deploy/ops-alert.sh');
+  assert.match(script, /cli\.js ops --notify/);
+  assert.match(script, /OPS_ALERT_STATE_FILE=\/alert-state\/alert-state\.json/);
+  assert.match(script, /--no-deps/);
+  const installer = read('deploy/install-ops-cron.sh');
+  assert.match(installer, /\*\/5 \* \* \* \*/);
+  assert.match(installer, /line-ccc-ops-alert/);
+  assert.match(installer, /OPS_TELEGRAM_CHAT_ID/);
 });
 
 test('CLI exposes vault rotation and alert notification with explicit opt-in', () => {
@@ -213,7 +272,7 @@ test('CLI exposes vault rotation and alert notification with explicit opt-in', (
   assert.match(cli, /const dryRun = !process\.argv\.includes\('--confirm'\)/);
   assert.match(cli, /await rotateVault\(database\.pool, \{ \.\.\.keys, dryRun \}\)/);
   assert.match(cli, /process\.argv\.includes\('--notify'\)/);
-  assert.match(cli, /sendOpsAlert\(webhookUrl, health, \{ format: opsAlertFormat\(\) \}\)/);
+  assert.match(cli, /sendOpsAlert\(webhookUrl, health, \{ format, chatId \}\)/);
   const pkg = JSON.parse(read('package.json'));
   assert.equal(pkg.scripts['vault:rotate'], 'tsx apps/api/src/cli.ts rotate-vault');
   assert.equal(pkg.scripts['test:phase5f'], 'npm run build:api && node --test tests/phase5f.test.mjs');

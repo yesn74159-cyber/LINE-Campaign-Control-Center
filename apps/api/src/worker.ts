@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import type { Pool } from 'pg';
 import { createDatabase } from './db.js';
 import { createPostgresRepository } from './repository.js';
 import { createMessagingAdapter, ProviderTransportError, type MessagingAdapter } from './lineAdapter.js';
@@ -9,13 +11,15 @@ import { buildDeliveryPayload } from './livePushPayload.js';
 import type { QuotaReservation, SchedulerJob } from './types.js';
 import type { Repository } from './repository.js';
 
-export async function runWorkerOnce(repository: Repository, adapter: MessagingAdapter | ((job: SchedulerJob) => MessagingAdapter), options: { workerId?: string; jobId?: string; now?: Date; leaseMs?: number; maxAttempts?: number; retryBaseMs?: number } = {}) {
+export async function runWorkerOnce(repository: Repository, adapter: MessagingAdapter | ((job: SchedulerJob) => MessagingAdapter), options: { workerId?: string; jobId?: string; now?: Date; leaseMs?: number; recoverStale?: boolean; maxAttempts?: number; retryBaseMs?: number } = {}) {
   const now = options.now || new Date();
   const workerId = options.workerId || `worker-${randomUUID()}`;
-  const leaseMs = options.leaseMs ?? 60_000;
+  const leaseMs = options.leaseMs ?? workerLeaseMs();
   const maxAttempts = options.maxAttempts ?? 3;
   const retryBaseMs = options.retryBaseMs ?? 250;
-  await repository.recoverStaleJobs(new Date(now.getTime() - leaseMs), now);
+  // Recovery is a startup action, not a per-poll one: a slow batch or a hanging LINE call
+  // longer than the lease would otherwise let the loop reclaim a job it is still sending.
+  if (options.recoverStale !== false) await repository.recoverStaleJobs(new Date(now.getTime() - leaseMs), now);
   const job = await repository.claimDueJob(workerId, now, options.jobId);
   if (!job) return { status: 'idle' as const, workerId };
   let activeOutboxId: string | undefined;
@@ -75,6 +79,76 @@ export async function runWorkerOnce(repository: Repository, adapter: MessagingAd
   }
 }
 
+const HEARTBEAT_AUDIT_INTERVAL_MS = 5 * 60_000;
+const HEARTBEAT_DB_TIMEOUT_MS = 3000;
+const DEFAULT_WORKER_LEASE_MS = 15 * 60_000;
+
+/**
+ * A recovered job is re-sent, so the lease must outlive the slowest batch this worker can
+ * produce. Fifteen minutes covers a full audience at the OA's per-minute limit; anything
+ * shorter trades a recovery delay for duplicated messages.
+ */
+export function workerLeaseMs(raw = process.env.WORKER_LEASE_MS): number {
+  const parsed = Number((raw || '').trim());
+  return Number.isInteger(parsed) && parsed >= 60_000 ? parsed : DEFAULT_WORKER_LEASE_MS;
+}
+
+export function workerHeartbeatFile(raw = process.env.WORKER_HEARTBEAT_FILE): string {
+  return (raw || '').trim() || '/tmp/worker-heartbeat';
+}
+
+/**
+ * Epoch seconds for the container healthcheck. The worker could not expose an HTTP
+ * port without widening the staging network surface, so liveness is a file the
+ * healthcheck can read and an audit row the API can read.
+ */
+export function writeWorkerHeartbeat(file: string, now = new Date()): boolean {
+  try {
+    fs.writeFileSync(file, String(Math.floor(now.getTime() / 1000)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function withTimeout<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<F>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+  try {
+    return await Promise.race([promise.catch(() => fallback), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function recordWorkerHeartbeatAudit(pool: Pool, workerId: string, state: { lastAuditAt: number; workspaceId?: string }) {
+  const now = Date.now();
+  if (now - state.lastAuditAt < HEARTBEAT_AUDIT_INTERVAL_MS) return;
+  state.lastAuditAt = now;
+  try {
+    // audit_log.workspace_id is NOT NULL, so the heartbeat borrows the workspace of the
+    // most recent scheduler job instead of inventing one.
+    const workspaceId = state.workspaceId ?? await withTimeout(
+      pool.query<{ workspace_id: string }>('select workspace_id from scheduler_jobs order by created_at desc limit 1')
+        .then((result) => result.rows[0]?.workspace_id, () => undefined),
+      HEARTBEAT_DB_TIMEOUT_MS,
+      undefined
+    );
+    if (!workspaceId) return;
+    state.workspaceId = workspaceId;
+    await withTimeout(
+      pool.query(
+        "insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,'worker','WORKER_HEARTBEAT','worker',$2,$3::jsonb)",
+        [workspaceId, workerId, JSON.stringify({ detail: 'worker loop alive' })]
+      ),
+      HEARTBEAT_DB_TIMEOUT_MS,
+      undefined
+    );
+  } catch {
+    // The file still proves liveness; the next interval retries the audit row.
+  }
+}
+
 export async function startWorker() {
   const mode = (process.env.APP_MODE || 'DRY_RUN').trim().toUpperCase();
   if (mode !== 'DRY_RUN' && mode !== 'LIVE') throw new Error('worker requires APP_MODE=DRY_RUN or APP_MODE=LIVE');
@@ -85,13 +159,21 @@ export async function startWorker() {
   const adapterForJob = (job: SchedulerJob) => createMessagingAdapter({ pool: database.pool, jobMode: job.mode });
   const once = process.argv.includes('--once');
   const pollMs = Number(process.env.WORKER_POLL_MS || 1000);
+  const heartbeatFile = workerHeartbeatFile();
+  const heartbeatWorkerId = `worker-${randomUUID()}`;
+  const heartbeat = { lastAuditAt: 0, workspaceId: undefined as string | undefined };
+  const leaseMs = workerLeaseMs();
+  let recovered = false;
   let stopped = false;
   const stop = () => { stopped = true; };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
     do {
-      await runWorkerOnce(repository, adapterForJob);
+      writeWorkerHeartbeat(heartbeatFile);
+      await recordWorkerHeartbeatAudit(database.pool, heartbeatWorkerId, heartbeat);
+      await runWorkerOnce(repository, adapterForJob, { leaseMs, recoverStale: !recovered });
+      recovered = true;
       if (!once && !stopped) await new Promise((resolve) => setTimeout(resolve, pollMs));
     } while (!once && !stopped);
   } finally {

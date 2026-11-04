@@ -111,6 +111,42 @@ export async function checkLineProfile(token: string, userId: string, transport:
   return { reachable: true, displayName: name };
 }
 
+export type TokenRecheck = { oaId: string; basicId: string; displayName: string; checkedAt: string };
+
+/**
+ * Re-reads the stored access token and proves it still works with a read-only bot-info GET.
+ * Nothing here touches `enabled`, the connection status, or the send path: checking a
+ * credential must never be able to take a working OA offline or consume message quota.
+ */
+export async function recheckOaAccessToken(pool: Pool, input: { workspaceId: string; oaId: string; key: Buffer; transport?: FetchFn; actor?: string }): Promise<TokenRecheck> {
+  const tokenBuffer = await resolveOaAccessToken(pool, { workspaceId: input.workspaceId, oaId: input.oaId, key: input.key });
+  if (!tokenBuffer) throw new Error('no stored access token for this OA');
+  const info = await checkLineBotToken(tokenBuffer.toString('utf8'), input.transport);
+  const stored = await pool.query<{ bot_basic_id: string }>(
+    'select bot_basic_id from oa_credential_vault where workspace_id=$1 and oa_integration_id=$2',
+    [input.workspaceId, input.oaId]
+  );
+  const expected = stored.rows[0]?.bot_basic_id;
+  if (!expected) throw new Error('no stored credential for this OA');
+  if (expected !== info.basicId) throw new Error(`stored token belongs to ${info.basicId}, not ${expected}`);
+  const checked = await pool.query<{ checked_at: Date }>(
+    'update oa_credential_vault set access_token_checked_at=now(), updated_at=now() where workspace_id=$1 and oa_integration_id=$2 returning access_token_checked_at as checked_at',
+    [input.workspaceId, input.oaId]
+  );
+  await pool.query(
+    "update oa_integrations set last_validated_at=now(), validation_error=null where id=$1 and workspace_id=$2 and environment='STAGING'",
+    [input.oaId, input.workspaceId]
+  );
+  if (input.actor) {
+    await pool.query(
+      "insert into audit_log(workspace_id,actor,action,target_type,target_id,detail) values ($1,$2,'OA_TOKEN_RECHECKED','oa',$3,$4::jsonb)",
+      [input.workspaceId, input.actor, input.oaId, JSON.stringify({ detail: 'read-only bot info GET succeeded; enabled state untouched' })]
+    );
+  }
+  const checkedAt = checked.rows[0]?.checked_at;
+  return { oaId: input.oaId, basicId: info.basicId, displayName: info.displayName, checkedAt: (checkedAt instanceof Date ? checkedAt : new Date(String(checkedAt))).toISOString() };
+}
+
 export function registerOaConnectRoutes(
   app: FastifyInstance, pool: Pool | null,
   requireUser: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
@@ -175,7 +211,10 @@ export function registerOaConnectRoutes(
           "insert into oa_integrations (workspace_id,provider_id,basic_id,display_name,environment,enabled,connection_status,credential_status) " +
           "values ($1,$2,$3,$4,'STAGING',false,'LIVE_LOCKED','REFERENCE_CONFIGURED') " +
           "on conflict (workspace_id,provider_id,basic_id) do update " +
-          "set display_name=excluded.display_name,enabled=false,connection_status='LIVE_LOCKED',credential_status='REFERENCE_CONFIGURED' returning id",
+          // Re-entering the same credentials is how an operator re-checks an OA. It must not
+          // disable an OA that is already sending: `enabled` is an explicit operator decision
+          // (setOaEnabled) and connection_status is left alone so a healthy OA keeps its badge.
+          "set display_name=excluded.display_name,credential_status='REFERENCE_CONFIGURED' returning id, enabled",
           [user.workspaceId,providerId,info.basicId,info.displayName]
         );
         const oaId = String(inserted.rows[0].id);
@@ -202,7 +241,7 @@ export function registerOaConnectRoutes(
         return reply.code(201).send({
           oaId, displayName: info.displayName,basicId: info.basicId,
           accessTokenValidated: true, webhookSecretValidated: false,
-          sendingEnabled: false, status:'VERIFY_PENDING'
+          sendingEnabled: Boolean(inserted.rows[0].enabled), status:'VERIFY_PENDING'
         });
       } catch (error) {
         await client.query('rollback').catch(() => undefined);

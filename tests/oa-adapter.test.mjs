@@ -62,6 +62,13 @@ test('provider response errors expose retry safety without leaking payloads', ()
   assert.rejects(() => new MockLineMessagingAdapter(transport).send({ job, policy: approvedPolicy }), (error) => error instanceof ProviderTransportError && error.status === 503 && error.retryable && error.uncertain && !error.message.includes('token'));
 });
 
+test('a 409 from the provider is the retry key already accepted, not a failure', async () => {
+  const transport = new MockTransport({ status: 409, requestId: 'retry-accepted' });
+  const result = await new MockLineMessagingAdapter(transport).send({ job, policy: approvedPolicy });
+  assert.equal(result.providerStatus, 409);
+  assert.equal(result.providerRequestId, 'retry-accepted');
+});
+
 test('dispatch policy blocks unsafe approval, consent, quota, rate and kill-switch states', () => {
   assert.throws(() => validateDispatchPolicy({ ...approvedPolicy, approvalStatus: 'VALIDATED' }), /validated and approved/);
   assert.throws(() => validateDispatchPolicy({ ...approvedPolicy, requestedRecipients: 11 }), /consent/);

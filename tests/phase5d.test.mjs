@@ -126,6 +126,12 @@ test('live adapter decrypts the per-OA token, never sends previews, and zeroizes
   );
   assert.ok(failingBuffer.every((byte) => byte === 0), 'token buffer must be zeroized on provider errors');
 
+  const acceptedBuffer = Buffer.from(token);
+  const accepted = new LiveLineMessagingAdapter(fakeHttpTransport(() => ({ status: 409, requestId: 'req-409' })), async () => acceptedBuffer, undefined, { appMode: 'LIVE', liveEnabled: true });
+  const acceptedResult = await accepted.send({ job: liveJob(), delivery, payload: buildDeliveryPayload({ recipientKey: userId, flexMessage: flex }) });
+  assert.equal(acceptedResult.providerStatus, 409, 'LINE accepted the retry key, so the send is not a failure');
+  assert.ok(acceptedBuffer.every((byte) => byte === 0), 'a 409 still zeroizes the token buffer');
+
   const missing = new LiveLineMessagingAdapter(fakeHttpTransport(), async () => null, undefined, { appMode: 'LIVE', liveEnabled: true });
   await assert.rejects(
     () => missing.send({ job: liveJob(), delivery, payload: buildDeliveryPayload({ recipientKey: userId, flexMessage: flex }) }),
@@ -174,7 +180,7 @@ function fakeRepo({ job, deliveries, contexts, readiness = () => readinessBase, 
   return {
     state,
     calls,
-    async recoverStaleJobs() { calls.push(['recoverStaleJobs']); },
+    async recoverStaleJobs(staleBefore, now) { calls.push(['recoverStaleJobs', staleBefore, now]); },
     async claimDueJob() { calls.push(['claimDueJob']); return { ...state.job }; },
     async getCampaignReadiness(...args) { calls.push(['getCampaignReadiness', ...args]); return state.readiness(state); },
     async markJobSending(id, workerId) { calls.push(['markJobSending', id, workerId]); state.job.status = 'SENDING'; },
@@ -261,6 +267,36 @@ test('worker skips already-sent deliveries so a re-run is idempotent', async () 
   assert.equal(adapter.transport.requests.length, 1);
   assert.deepEqual(adapter.transport.requests[0].body, { to: secondUserId, messages: [flex] });
   assert.equal(repo.calls.filter((call) => call[0] === 'markOutboxSending').length, 1);
+});
+
+test('a provider 409 means the retry key was already accepted, so the delivery counts as sent', async () => {
+  const repo = fakeRepo(dryRunFixture());
+  const adapter = new MockLineMessagingAdapter(new MockTransport({ status: 409, requestId: 'retry-accepted' }));
+  const outcome = await runWorkerOnce(repo, adapter, { jobId: 'job-dry', workerId: 'worker-409', now: new Date('2030-11-05T10:00:00.000Z') });
+  assert.equal(outcome.status, 'completed');
+  assert.deepEqual(repo.state.deliveries.map((item) => [item.status, item.providerStatus]), [['SENT', 409], ['SENT', 409]]);
+  assert.equal(repo.calls.filter((call) => call[0] === 'markOutboxFailure').length, 0, '409 must not become a failure row the operator would resend');
+  assert.equal(adapter.transport.requests.length, 2, 'a 409 is accepted, not retried');
+});
+
+test('the worker lease is 15 minutes and stale recovery runs once per start', async () => {
+  const { workerLeaseMs } = await import('../dist/api/worker.js');
+  assert.equal(workerLeaseMs(''), 900_000);
+  assert.equal(workerLeaseMs('60000'), 60_000);
+  assert.equal(workerLeaseMs('30000'), 900_000, 'below the floor the value is ignored');
+  assert.equal(workerLeaseMs('not-a-number'), 900_000);
+
+  const now = new Date('2030-11-05T10:00:00.000Z');
+  const repo = fakeRepo(dryRunFixture());
+  await runWorkerOnce(repo, new MockLineMessagingAdapter(), { jobId: 'job-dry', workerId: 'worker-lease', now });
+  assert.deepEqual(repo.calls.find((call) => call[0] === 'recoverStaleJobs'), ['recoverStaleJobs', new Date(now.getTime() - 900_000), now]);
+
+  const second = fakeRepo(dryRunFixture());
+  await runWorkerOnce(second, new MockLineMessagingAdapter(), { jobId: 'job-dry', workerId: 'worker-lease', now, recoverStale: false });
+  assert.equal(second.calls.some((call) => call[0] === 'recoverStaleJobs'), false, 'a later poll must not reclaim a job it is still sending');
+
+  const workerSource = readFileSync(new URL('../apps/api/src/worker.ts', import.meta.url), 'utf8');
+  assert.match(workerSource, /runWorkerOnce\(repository, adapterForJob, \{ leaseMs, recoverStale: !recovered \}\)/);
 });
 
 test('rate limiting releases nothing before reservation and schedules a retry', async () => {
