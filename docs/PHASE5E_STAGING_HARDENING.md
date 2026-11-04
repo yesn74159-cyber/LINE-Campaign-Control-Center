@@ -193,9 +193,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy\offsite-backup.ps1
 - [x] nightly backup script + cron installer (2026-11-04): ซ้อมครบทั้ง pass/fail/rotation/restore บน Docker ในเครื่อง ตาม runbook ข้างบน
 - [x] cron ติดตั้งจริงบน staging VM (2026-11-04, `a1e59c5`): `30 20 * * *`, proof run เขียน `nightly-20261104T113014Z.dump` = 123,491 bytes, log `nightly OK bytes=123491 tables=27`, `sha256sum -c --strict` = OK, `systemctl is-active/is-enabled cron` = active/enabled, dump เก่า `pre014-*`/`post013-*` ยังอยู่ครบ
 - [x] สำเนาออกนอก VM ด้วย `deploy/offsite-backup.ps1` (2026-11-04, `72164ff`): ดึง dump + sidecar, ตรวจ hash ตรง, และซ้อม restore สำเนานั้นใน postgres container ชั่วคราว (exit 0, stderr 0, 27 ตาราง, ledger 001–014, `line_customers=1`, `audit_log=117`)
+- [x] proposal Tier C (`db/proposals/015_tier_c_app_role.sql` + `verify-tier-c.sql`, 2026-11-04): ซ้อมบน disposable DB ครบทั้ง role ใหม่, 27 policies, app จริงรันด้วย `line_ccc_app` แล้ว smoke ผ่าน 16/16, owner ยัง migrate/dump/restore ได้, rollback รันจริงหนึ่งรอบ — **ยังไม่ apply บน staging** เพราะ gate อนุมัติรายการ SQL + หน้าต่างเวลายังเปิดอยู่ (รายละเอียดใน [PHASE5F](PHASE5F_OPERATIONS_ROTATION_RLS.md))
 - [ ] ยังไม่มี auto-copy: การดึงออกนอก VM ยังเป็นการกดมือที่เครื่องผู้พัฒนา และ `FAIL` ใน `backup.log` ยังไม่มีเส้นทางแจ้งเตือน
 
 ## Limits ที่ยังค้าง
+
+- `line_ccc` ยังเป็น superuser และเอาออกไม่ได้: compose start cluster ด้วย `POSTGRES_USER=line_ccc` ทำให้ role นั้นเป็น bootstrap user ของ initdb ซึ่ง PostgreSQL ห้ามถอด SUPERUSER (พิสูจน์แล้วตอนซ้อม Tier C) ทางที่ Tier C เลือกคือให้ runtime เปลี่ยนไปใช้ `line_ccc_app` แทน ส่วนจะลบ superuser ออกจริงต้องสร้าง cluster ใหม่ด้วย bootstrap user คนอื่นแล้ว `pg_restore` ข้อมูลเข้าไป
 
 - deploy จริงแล้วบนเครื่อง staging แยก `line-ccc-staging` (ไม่ใช่ shared preview host); bootstrap ผ่าน `deploy/host-bootstrap.sh` (refuse ถ้า 80/443 ถูกจอง)
 - migration 001–012 apply แล้วบน staging; migration 012 เป็นล่าสุด — ไม่มี RLS/grant change จากเฟสนี้

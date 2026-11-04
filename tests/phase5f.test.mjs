@@ -221,7 +221,7 @@ test('CLI exposes vault rotation and alert notification with explicit opt-in', (
 
 test('RLS and grant rollout stays a guarded proposal outside migrations', () => {
   const migrationFiles = fs.readdirSync(path.join(root, 'db', 'migrations'));
-  assert.equal(migrationFiles.some((file) => /rls_grant|fk_supporting_indexes/.test(file)), false, 'proposal must not be an auto-applied migration');
+  assert.equal(migrationFiles.some((file) => /rls_grant|fk_supporting_indexes|tier_c_app_role/.test(file)), false, 'proposal must not be an auto-applied migration');
 
   const rls = read('db/proposals/013_rls_grant_tier_ab.sql');
   const rlsCode = rls.replace(/--.*$/gm, '');
@@ -238,5 +238,27 @@ test('RLS and grant rollout stays a guarded proposal outside migrations', () => 
   const verify = read('db/proposals/verify-rls-grant.sql');
   const verifyCode = verify.replace(/--.*$/gm, '');
   assert.doesNotMatch(verifyCode, /\b(insert|update|delete|alter|create|drop|grant|revoke)\b/i, 'verification SQL must stay read-only');
+
+  const tierC = read('db/proposals/015_tier_c_app_role.sql');
+  const tierCCode = tierC.replace(/--.*$/gm, '');
+  assert.match(tierC, /PROPOSAL ONLY/);
+  assert.match(tierCCode, /create role line_ccc_app/);
+  assert.match(tierCCode, /nobypassrls/, 'the runtime role must not bypass the policies');
+  assert.match(tierC, /as permissive for all to line_ccc_app using \(true\) with check \(true\)/, 'every RLS table needs a policy for the runtime role or it reads as empty');
+  assert.match(tierCCode, /alter default privileges/, 'tables from later migrations must reach the runtime role');
+  assert.doesNotMatch(tierCCode, /alter role line_ccc with/i, 'line_ccc is the initdb bootstrap user - rehearsal proved nosuperuser is refused');
+  assert.doesNotMatch(tierCCode, /force row level security/i, 'FORCE waits for tenant-scoped policies');
+  assert.doesNotMatch(tierCCode, /password/i, 'the role password is set with \\password, never stored in the repository');
+  assert.doesNotMatch(tierCCode, /^\s*(begin|commit)\s*;/im, 'atomicity must come from --single-transaction, not from statements inside the file');
+
+  const tierCVerify = read('db/proposals/verify-tier-c.sql');
+  assert.match(tierCVerify, /set local role line_ccc_app/, 'the verifier must measure what the runtime role actually sees');
+  assert.match(tierCVerify, /^rollback;/m, 'the role switch must always be rolled back');
+  const tierCChecks = tierCVerify
+    .replace(/--.*$/gm, '')
+    .replace(/^\\echo.*$/gm, '')
+    .replace(/\$\$[\s\S]*?\$\$/g, ' ')
+    .replace(/'[^']*'/g, "''");
+  assert.doesNotMatch(tierCChecks, /\b(insert|update|delete|alter|create|drop|grant|revoke|truncate)\b/i, 'the Tier C verifier must stay read-only outside its role-switch probe');
 });
 

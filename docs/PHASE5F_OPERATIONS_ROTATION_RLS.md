@@ -87,11 +87,12 @@ DATABASE_URL=... npm run ops:health -- --notify
 - ถ้า backend ยังเป็น owner จะไม่ถูกกระทบ; ห้ามใช้ `FORCE ROW LEVEL SECURITY` จนกว่าจะมี dedicated app role + policies ครบ
 - ตรวจว่า `service_role`/dashboard ไม่ถูกใช้งานจาก browser
 
-**ระดับ C — least privilege เต็มรูปแบบ (Phase ถัดไป)**
+**ระดับ C — least privilege เต็มรูปแบบ (เขียน proposal + ซ้อมแล้ว 2026-11-04, ยังไม่ apply)**
 - สร้าง role `line_ccc_app` แบบ `NOBYPASSRLS`, grant เฉพาะ SELECT/INSERT/UPDATE/DELETE ที่จำเป็น และให้ API/worker ใช้ role นี้
 - `FORCE ROW LEVEL SECURITY` + policies ที่ผูก `current_setting('app.workspace_id')`; ต้องแก้ repository ให้ `set local app.workspace_id` ทุก transaction — เป็นงานโค้ดแยก ไม่ควรทำพร้อม grant rollout
 - เพิ่ม index ทั้ง 7 ตัวด้วย `CREATE INDEX CONCURRENTLY IF NOT EXISTS` (ต้องรันนอก transaction, ทีละตัว, มี rollback `DROP INDEX CONCURRENTLY`)
 - บันทึกผลด้วย [read-only-audit.sql](../db/audit/read-only-audit.sql) ก่อน/หลัง
+- ข้อจำกัดที่ซ้อมแล้วเจอ: **role เจ้าของที่ initdb สร้างให้ `line_ccc` เป็น bootstrap user จึง `nosuperuser` ไม่ได้** รายละเอียดทั้งหมดอยู่ในหัวข้อ "Tier C — ผลซ้อม" ด้านล่าง
 
 ### ไฟล์ข้อเสนอและผลซ้อม (2026-11-01)
 
@@ -102,18 +103,121 @@ DATABASE_URL=... npm run ops:health -- --notify
 - ข้อสังเกต: `schema_usage` ของ browser role ยังเป็น true บน `public` เพราะสิทธิ์มาจาก `PUBLIC` (ข้อเสนอ revoke เฉพาะ schema ที่ไม่ใช่ `public` และต้องปิด Data API exposure แยก); การตรวจ FK แบบเข้มพบ composite FK ที่ยังไม่มี index นำหน้าเพิ่ม **18** รายการ ต้องตัดสินใจเรื่อง index bloat แยกก่อน
 - ไฟล์ทั้งหมดอยู่ใต้ `db/proposals/` **ไม่อยู่ใน `db/migrations/`** จึงไม่ถูก apply อัตโนมัติ
 
-### Gates ก่อน apply (ต้องอนุมัติแยก)
+### Tier C — ผลซ้อมบน disposable DB (2026-11-04)
 
-- [ ] ได้ผล audit จริงที่ยืนยัน grants/RLS/policies ปัจจุบัน
-- [ ] backup สำเร็จ + checksum + restore drill ผ่าน
-- [ ] อนุมัติรายการ SQL และหน้าต่างเวลา
-- [x] ซ้อมบน disposable DB (migrate 001–012 + apply proposal + smoke) — ยังต้องซ้อมซ้ำจาก backup จริงก่อน apply
-- [ ] หลัง apply: audit ซ้ำ, `npm run test:db-connection`, smoke, integration suites
-- [ ] เอกสาร rollback: `GRANT` เดิม / `DROP POLICY` / `ALTER TABLE ... DISABLE ROW LEVEL SECURITY` เฉพาะที่เพิ่มในรอบนั้น
+สภาพที่ซ้อม: `postgres:16-alpine` ที่ start ด้วย `POSTGRES_USER=line_ccc` (เหมือนกับ compose บน staging) → migrate 001–014 + seed ด้วย `node dist/api/cli.js setup` ใน container `node:24-alpine` → apply `013_rls_grant_tier_ab.sql` ให้ได้สถานะ**เดียวกับ staging จริง** (RLS 27/27, policy 0) → ค่อย apply [015_tier_c_app_role.sql](../db/proposals/015_tier_c_app_role.sql)
 
-หมายเหตุ 2026-11-01: ผู้ใช้ไฟเขียวให้ดำเนินการ RLS/grant rollout แล้ว แต่ gate สองข้อแรกยังเปิดอยู่เพราะยังไม่มี `AUDIT_DATABASE_URL`/`BACKUP_DATABASE_URL` จึงยังไม่มีการ apply กับ cloud ใด
+**1) ประเด็นแรกที่ต้องยอมแพ้: demote ตัวเองทำไม่ได้**
 
-**ยังไม่มี SQL ใดถูก apply หรือสร้างเป็น migration ในเฟสนี้**
+```
+alter role line_ccc with nosuperuser
+ERROR:  permission denied to alter role
+DETAIL: The bootstrap user must have the SUPERUSER attribute.
+```
+
+docker postgres image start cluster ด้วย `POSTGRES_USER=line_ccc` ทำให้ role นั้นเป็น bootstrap user ของ initdb และ PostgreSQL กันไม่ให้เอา SUPERUSER ออก (เป็นพฤติกรรมของ PostgreSQL ไม่ใช่ค่าที่เราตั้งผิด) ดังนั้น "แก้ข้อค้นพบใน audit ด้วยการ demote" จึงเป็นไปไม่ได้บน cluster ปัจจุบัน → proposal เปลี่ยนเป้าหมายเป็น **แยก connection ของ runtime ออกจาก role เจ้าของ** แทน
+
+**2) `NOBYPASSRLS` บน superuser เป็นแค่เครื่องสำอาง — 015 จึงจงใจไม่ตั้ง**
+
+ซ้อมตั้ง `nobypassrls` ให้ `line_ccc`: ได้ `rolbypassrls = f` จริงแต่ `select count(*) from campaigns` ยังเห็น 7 แถว และ `insert` ยังลง เพราะ superuser bypass RLS โดยไม่สน flag นั้น ถ้าตั้งไป audit จะอ่านว่า "ผ่าน" ทั้งที่พฤติกรรมเท่าเดิม — เป็นการซ่อนข้อค้นพบ ไม่ใช่แก้
+
+**3) พิสูจน์ว่า policy block ขาดไม่ได้** (role ที่ grant DML ครบแต่ไม่มี policy)
+
+|คำสั่ง|ผล|
+|---|---|
+|`select count(*) from campaigns`|**0 แถว โดยไม่มี error**|
+|`update campaigns ...` / `delete from campaigns`|`UPDATE 0` / `DELETE 0`|
+|`insert into campaigns (...)`|`ERROR: new row violates row-level security policy`|
+|`create table ...`|`permission denied for schema public`|
+|`alter table campaigns add column ...`|`must be owner of table campaigns`|
+
+backend ที่ตกอยู่ในสภาพนี้ **ไม่ crash** — มันเสิร์ฟ admin panel ที่ว่างเปล่าให้ operator ดู ซึ่งแย่กว่า crash มาก นี่คือเหตุผลที่ 015 ไม่มี `BEGIN/COMMIT` ในไฟล์ และต้องรันด้วย `--single-transaction -v ON_ERROR_STOP=1`
+
+**4) ผลตรวจหลัง apply 015 (27 policies / 27 ตาราง)**
+
+- `line_ccc_app`: `rolsuper=f`, `rolbypassrls=f`, `rolcreatedb=f`, `rolcreaterole=f`, `rolconnlimit=20` (headroom บน `DB_POOL_MAX` = 5 ต่อ process มีเฉพาะ api + worker)
+- อ่านครบทุกตารางตรงจำนวนเดียวกับ owner — verifier พิมพ์ `NO DIFFERENCE across 27 tables`
+- write ลงจริง: `update campaigns set title = title || ' (app-role edit)'` → `UPDATE 7` และ owner เห็นแถวที่แก้; `insert into audit_log (...)` → `INSERT 0 1`
+- DDL ถูกปฏิเสธครบชุด: `create table`, `truncate table` (`permission denied for table campaigns`), `create role`, `createdb`, `create extension pg_trgm`
+- health query ของ [db.ts:202](../apps/api/src/db.ts#L202) รันได้เป็น app role: `current_schema=public`, `search_path="$user", public`, `pg_stat_ssl` อ่านได้, `to_regprocedure('gen_random_uuid()')` → `t`
+- **app จริงรันได้**: `node dist/api/server.js` ต่อด้วย `line_ccc_app` → smoke ผ่าน **16/16** (login → `role=owner`, dashboard, delivery-health, audit log, logout — logout เป็น write path ที่วิ่งผ่าน `WITH CHECK` ของ policy)
+- `node dist/api/worker.js --once` เป็น app role → exit 0 ไม่มี permission error
+- owner ยังทำงานครบ: `cli.js migrate` ผ่าน, `pg_dump` ได้ 113,578 bytes (TOC นับตารางได้), `createdb` + `pg_restore --exit-on-error` ลง scratch DB แล้วนับ `campaigns` ได้ 7 แถว → nightly backup และ restore drill ไม่พังตาม
+- idempotent: รัน 015 ซ้ำได้ `NOTICE: policies created for line_ccc_app: 0` และจำนวน policy ยัง 27
+- sequences = 0 (`pg_class` มีเฉพาะ relkind `r` และ `i`) → ไม่ต้อง grant usage บน sequence
+- default privileges ทำงานจริง: สร้าง table ใหม่ด้วย owner แล้ว app role `insert`/`select` ได้ทันที (`pg_default_acl`: `r` → `line_ccc_app=arwd/line_ccc`, `S` → `line_ccc_app=rwU/line_ccc`) แต่ table ใหม่**ไม่ได้เปิด RLS** → ต้องรัน 015 ซ้ำหลังทุก migration (block 3/4 ของ verifier จับให้ได้)
+- ทดสอบ verifier โดยสร้างตารางที่เปิด RLS แต่ไม่มี policy ขึ้นมาหนึ่งตัว → รายงาน `DIFFERENCE zz_drift_gap: owner sees 2, line_ccc_app sees 0` ตรงตามตั้งใจ
+
+**5) สิ่งที่ต้องเปลี่ยนนอกเหนือจาก SQL (ยังไม่ทำ — ต้องอนุมัติเป็นขั้นแยก)**
+
+- `.env.staging`: `DATABASE_URL` ของ api/worker ชี้ไป `line_ccc_app` (สอง service ใช้ `env_file` ตัวเดียวกัน) และเก็บ owner URL ไว้สำหรับงาน migrate
+- [cli.ts](../apps/api/src/cli.ts) ใช้ pool เดียวจาก `DATABASE_URL` สำหรับ `migrate|seed|setup|ops|rotate-vault` → คำสั่งเหล่านั้นต้องเรียกด้วย owner URL ชัดเจน (เช่น `docker compose run -e DATABASE_URL=...`) มิฉะนั้น migration จะล้มเหลวที่ `permission denied for schema public` ซึ่ง fail loud ถือว่าปลอดภัยกว่า fail เงียบ
+- integration suites ที่สร้าง disposable DB ต้องใช้ owner URL (พวกมันรัน migration เอง)
+- `LINE_IDENTITY_HASH_KEY` rotation เป็นอีกขั้น ไม่รวมมากับ Tier C
+
+ลำดับการ apply บน staging เมื่อได้รับอนุมัติ (แต่ละขั้นรันจาก `/srv/line-ccc-staging`, owner URL ไม่เคยโผล่ใน argv ของ host เพราะ psql รันใน container):
+
+1. `deploy/nightly-backup.sh` เอาสำเนาล่าสุด + `offsite-backup.ps1` ที่เครื่อง + `sha256sum -c --strict` → ยืนยันว่ามีอะไรให้ rollback
+2. copy `db/proposals/015_tier_c_app_role.sql` เข้า postgres container (`docker compose ... cp <file> postgres:/tmp/015.sql`) แล้วยิง:
+   ```bash
+   docker compose --env-file .env.staging -f docker-compose.staging.yml exec -T postgres \
+     sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" --single-transaction -v ON_ERROR_STOP=1 -f /tmp/015.sql'
+   ```
+   ต้องมี `sh -c` เพราะ `$POSTGRES_DB` ถูก expand ภายใน container เท่านั้น (บน host ว่างเปล่า) — เหตุผลเดียวกับ nightly-backup.sh และไม่มี credential ใดอยู่ใน argv
+3. ตั้ง password ของ `line_ccc_app` ด้วย `... exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\password line_ccc_app"'` (interactive, ไม่ใส่พาสเวิร์ดใน command line) แล้วเก็บเข้า `.env.staging`
+4. แก้ `.env.staging` เพิ่ม `DATABASE_URL` ตัวใหม่ที่เป็น app role แล้ว `docker compose ... up -d api worker`
+5. ยืนยัน: `docker logs line-ccc-api-staging --since 5m`, smoke ผ่าน 16/16, `/api/ops/delivery-health` ไม่มี alert, `verify-tier-c.sql` พิมพ์ `NO DIFFERENCE`
+6. งาน migrate ครั้งถัดไปต้องรันด้วย owner URL เท่านั้น (และต้องรัน 015 ซ้ำถ้ามี table ใหม่)
+7. ถ้าขั้น 5 พัง: rollback ด้านล่าง + `DATABASE_URL` กลับเป็น owner + `up -d api worker`
+
+**6) ช่องโหว่ที่ยังเหลือหลัง Tier C (ต้องตัดสินใจแยก)**
+
+superuser login ยังมีอยู่ และเอาออกได้ด้วยทางเดียวคือสร้าง cluster ใหม่ด้วย bootstrap user คนอื่นแล้ว `pg_restore` ข้อมูลเข้าไป (volume ใหม่ + dump/restore หนึ่งรอบ = ย้ายข้อมูลจริง ไม่ใช่ `ALTER`) มิฉะนั้นต้องยอมรับว่า superuser มีไว้สำหรับ break-glass/migrate/backup เท่านั้น และยืนยันด้วย verifier เป็นระยะว่า runtime ไม่ได้ใช้มัน
+
+### Gates ก่อน apply Tier C (ต้องอนุมัติแยก)
+
+- [x] ได้ผล audit จริงที่ยืนยัน grants/RLS/policies ปัจจุบัน (2026-11-01, บันทึกใน [PHASE5E](PHASE5E_STAGING_HARDENING.md))
+- [x] Tier A/B apply บน staging แล้ว → สถานะก่อน Tier C คือ RLS ทุกตาราง, policy 0, ไม่มี `FORCE`, `line_ccc` ยัง superuser+BYPASSRLS
+- [x] backup สำเร็จ + checksum + restore drill ผ่าน (2026-11-04: nightly cron บน VM + สำเนาออกนอก VM + restore dump จริงลง scratch DB และนับแถวเทียบกับบันทึก)
+- [x] ซ้อมบน disposable DB — 015 ทั้งบล็อก (migrate 001–014 + seed + Tier A/B + Tier C + app จริง + worker + smoke 16/16) รายละเอียดข้างบน
+- [ ] อนุมัติรายการ SQL ของ 015 และหน้าต่างเวลา พร้อมชื่อผู้ดำเนินการ
+- [ ] หลัง apply: รัน `verify-tier-c.sql` ซ้ำ, smoke, integration suites และเฝ้า error rate อย่างน้อยหนึ่งรอบ scheduler
+- [x] rollback เขียนไว้ด้านล่าง **และทดสอบบน disposable DB แล้ว** (apply → rollback → apply ครบหนึ่งรอบ)
+
+Rollback ของ Tier C (ลำดับนี้เท่านั้น — ถอน policy ก่อนถอน grant ไม่งั้น runtime จะเห็นตารางว่างกลางทาง):
+
+```sql
+begin;
+do $$   -- ถอน policy ที่ 015 สร้างทุกตัว
+declare t record;
+begin
+  for t in select c.relname, c.oid::regclass as rel from pg_class c
+           join pg_namespace n on n.oid = c.relnamespace
+           join pg_policy p on p.polrelid = c.oid and p.polname = c.relname || '_app_access'
+           where n.nspname = 'public' order by c.relname
+  loop
+    execute format('drop policy %I on %s', t.relname || '_app_access', t.rel);
+  end loop;
+end $$;
+revoke all on all tables in schema public from line_ccc_app;
+revoke usage on schema public from line_ccc_app;
+do $$ begin execute format('revoke all on database %I from line_ccc_app', current_database()); end $$;
+alter default privileges in schema public revoke all on tables from line_ccc_app;
+alter default privileges in schema public revoke all on sequences from line_ccc_app;
+drop role line_ccc_app;
+commit;
+```
+
+กับดักที่เจอตอนซ้อม rollback จริง: `drop role` ตรวจ dependency **ทั้ง cluster ไม่ใช่เฉพาะ database ที่เชื่อมต่อ** ถ้าเคยซ้อม restore dump (ที่ dump มาหลัง Tier C) ลง scratch DB ไว้บน container เดียวกัน policy ใน DB นั้นยังอ้างถึง role →
+
+```
+ERROR:  role "line_ccc_app" cannot be dropped because some objects depend on it
+DETAIL:  27 objects in database line_ccc_restore_drill
+```
+
+ทางแก้คือ `dropdb <scratch db>` ก่อน (หรือเล็งว่าไม่ต้องลบ role เลย — rollback ที่ปลอดภัยกว่าคือเปลี่ยน `DATABASE_URL` กลับเป็น owner URL แล้วปล่อย role ไว้) ผลซ้อมหลัง rollback: policy 0, role หาย, `pg_default_acl` 0, grant ของ app role 0, **ข้อมูลครบ (campaigns ยัง 7 แถว)** และ RLS ยังเปิด 27 ตารางเท่าเดิม = กลับสู่สถานะ Tier B พอดี
+
+หมายเหตุ 2026-11-04: Tier A/B ผ่านไปแล้ว, Tier C ถูกเขียนเป็น proposal + ซ้อมครบแล้ว แต่ยัง **ไม่ถูก apply บน staging** เพราะ gate เรื่องอนุมัติรายการ SQL + หน้าต่างเวลายังเปิดอยู่ และการสลับ `DATABASE_URL` ต้องทำพร้อม `.env.staging` ไม่ใช่พร้อม SQL อย่างเดียว
 
 ## 4) Cloud audit / backup / restore drill — สถานะและสิ่งที่ต้องเตรียม
 
