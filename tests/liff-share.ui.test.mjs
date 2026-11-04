@@ -26,8 +26,8 @@ function firstFlexText(node) {
   return Object.values(node).map(firstFlexText).find(Boolean) || '';
 }
 
-/** The Admin bundle against a stubbed API; /share is exercised outside LINE on purpose. */
-function harness({ liffId = LIFF_ID, oaUrl = OA_URL } = {}) {
+/** The Admin bundle against a stubbed API; /share and /r/<token> are exercised outside LINE on purpose. */
+function harness({ liffId = LIFF_ID, oaUrl = OA_URL, oaFriendUrl = null, lineMember = null } = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
@@ -35,6 +35,9 @@ function harness({ liffId = LIFF_ID, oaUrl = OA_URL } = {}) {
     if (pathname.startsWith('/api/') || pathname === '/health') {
       if (pathname === '/health') return send({ ok: true, mode: 'DRY_RUN', liveSendEnabled: false, persistence: 'postgres' });
       if (pathname === '/api/config') return send({ liffId, oaUrl });
+      if (pathname === '/api/line-login/config') return send({ enabled: true });
+      if (pathname === '/api/line-login/session') return lineMember ? send({ member: lineMember }) : send({ error: 'not signed in' }, 401);
+      if (/^\/api\/referrals\/[^/]+\/click$/.test(pathname)) return send({ referral: { id: 'link-1', oaId: 'oa-2', status: 'ACTIVE' }, staffName: 'Operator', oaId: 'oa-2', oaName: 'heekoom', oaFriendUrl, next: 'LINE_LOGIN' });
       if (pathname === '/api/auth/me') return send({ user: { id: 'owner-a', displayName: 'Test Owner', role: 'owner', email: 'owner@example.test' } });
       if (pathname === '/api/dashboard') return send({ mode: 'DRY_RUN', persistence: 'postgres', appMode: 'DRY_RUN', liveSendEnabled: false, counts: {}, nextJob: null });
       if (pathname === '/api/campaigns') return send({ campaigns: [{ id: 'welcome', name: 'ต้อนรับ', title: 'ยินดีต้อนรับ', description: 'สวัสดีครับ', cta: 'ดูโปรโมชั่น' }] });
@@ -175,4 +178,31 @@ test('the bare LIFF url that every shared card points at finishes the funnel', a
 
   const unlinked = await openPage(t, harness({ oaUrl: null }), '/share');
   await unlinked.page.getByRole('heading', { name: 'ยังไม่ตั้งค่า LINE OA บนเซิร์ฟเวอร์' }).waitFor({ timeout: 10_000 });
+});
+
+const REFERRAL_TOKEN = 'r'.repeat(43);
+
+// Login only captures identity; the customer is reachable once they follow the OA, so the portal
+// has to send them there. The link must come from the referral's own OA, not the server default.
+test('the portal sends a signed-in visitor to add the OA behind their link', async (t) => {
+  const own = 'https://line.me/R/ti/p/@oa-two';
+  const { page, errors } = await openPage(
+    t,
+    harness({ oaFriendUrl: own, lineMember: { id: 'u1', displayName: 'Somchai', role: 'member' } }),
+    `/r/${REFERRAL_TOKEN}`
+  );
+  await page.locator('.staff-card').waitFor({ timeout: 10_000 });
+  const friend = page.getByRole('link', { name: /เพิ่มเพื่อนที่ LINE OA/ });
+  await friend.waitFor({ timeout: 10_000 });
+  assert.equal(await friend.getAttribute('href'), own, 'the button uses the referral OA, not /api/config');
+  assert.match(await page.locator('.member-session').innerText(), /Somchai/);
+  assert.equal(await page.getByRole('button', { name: 'เข้าสู่ระบบด้วย LINE' }).count(), 0, 'a signed-in visitor is not asked to log in again');
+  assert.deepEqual(errors, []);
+});
+
+test('the portal says which setting is missing instead of hiding the add-friend step', async (t) => {
+  const { page } = await openPage(t, harness({ oaUrl: null, lineMember: { id: 'u1', displayName: 'Somchai', role: 'member' } }), `/r/${REFERRAL_TOKEN}`);
+  await page.getByRole('button', { name: 'ออกจากระบบ LINE' }).waitFor({ timeout: 10_000 });
+  assert.equal(await page.getByRole('link', { name: /เพิ่มเพื่อนที่ LINE OA/ }).count(), 0);
+  assert.match(await page.locator('.portal-status').last().innerText(), /ยังไม่พบลิงก์เพิ่มเพื่อน/);
 });

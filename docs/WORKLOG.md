@@ -1,5 +1,16 @@
 # Worklog
 
+## 2026-11-04 — The portal captured the login and then forgot to send anyone to add the OA
+
+- A visitor who finished LINE Login on `/r/<token>` saw exactly two things: their own name and **ออกจากระบบ LINE**. Nothing in the funnel pointed at the step that makes them *reachable* — following `้heekoom`. The webhook only records `FOLLOW_VERIFIED` when a `follow` event arrives, so every enrolled-but-not-followed customer sat in the dashboard as a login with no conversion, and the operator had to tell them to add the OA by hand.
+- The click response already knew the answer and threw it away: `recordClick` joins `oa_integrations` to prove the link's OA is an enabled staging OA, then selects only the id. It now also selects that row's `display_name` and `basic_id` and returns `oaName` + `oaFriendUrl`, and the portal uses the OA name in its status line instead of printing a uuid to a customer.
+- `oaFriendUrl()` lives in its own module (`apps/api/src/oaFriendUrl.ts`) because two places build the same URL: `/api/config` for the card-less `/share` landing page, and the referral click. It returns null unless the stored value really is `@<2-50 chars>` — a blank or hand-typed `basic_id` must not produce a link to a page that does not exist.
+- **The URL comes from the referral link's own OA, on purpose.** `/api/config` still answers the first enabled OA ordered by `created_at`, so with several OAs the global endpoint can point at the wrong one — a browser test pins the precedence (`the button uses the referral OA, not /api/config`) so the gap cannot quietly become the behaviour.
+- The button appears **after** login, not before: `verifyReferralFollow` matches a follower by HMAC against the `line_customers` row that the LINE Login callback inserts, so a follow that lands first has nothing to attribute to and the referral stays unverified. Ordering the page this way is the cheapest fix available without changing the attribution model.
+- When neither the referral's OA nor the server has a usable add-friend URL, the portal says so (`ยังไม่พบลิงก์เพิ่มเพื่อนของ OA นี้ · ตั้งค่า basic_id หรือ LINE_OA_FRIEND_URL ฝั่งเซิร์ฟเวอร์`) instead of hiding the last step — which is also what local mock mode now shows, since the mock store has no OA rows to read a basic id from.
+- Tests: 147/147 node + browser cases pass (guarded PostgreSQL and authenticated E2E suites excluded as usual), including two new portal cases in the funnel suite and a `recordClick` case that drives the real SQL against a fake pool.
+
+
 ## 2026-11-04 — The share works: a real Flex card left the operator's own phone and its button landed on our page
 
 - `219ff24` went to staging after the usual gate (`scheduler_jobs` in `QUEUED/SCHEDULED/RETRYABLE/CLAIMED/SENDING` = 0 rows), and the served bundle was checked rather than assumed: `assets/index-DS3FONsk.js` contains `isInClient` and **zero** occurrences of `isInClientLINEApp`, `/health` still answers `DRY_RUN / liveSendEnabled: false`, `/share` still answers `frame-src 'self' linebridge: https://liff.line.me`. On the desktop the page now ends where it should — `เปิดหน้านี้ในแอป LINE เท่านั้น` instead of a TypeError.

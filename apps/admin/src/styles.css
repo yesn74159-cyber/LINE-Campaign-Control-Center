@@ -75,6 +75,8 @@ nav { margin-top: 26px; display: grid; gap: 5px; } nav button { border: 0; backg
 .line-login-button:hover:not(:disabled) { background: #05ad4b; }
 .line-login-button:focus-visible { outline: 3px solid #173d32; outline-offset: 3px; }
 .line-login-button:disabled { cursor: not-allowed; opacity: .55; }
+a.line-login-button { text-decoration: none; }
+.portal-after-login { display: grid; }
 .member-session { margin: 18px 0; color: #23483e; text-align: center; }
 .staff-card .secondary.full { min-height: 46px; width: 100%; }
 .portal-status { color: #286b58; background: #effaf5; border: 1px solid #cdebdc; border-radius: 8px; padding: 10px; min-height: 40px; }

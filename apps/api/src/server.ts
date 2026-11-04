@@ -17,6 +17,7 @@ import { registerCampaignMockRoutes } from './campaignRoutes.js';
 import { createLineLoginConfig, registerLineLoginRoutes } from './lineLogin.js';
 import { PostgresLineLoginStore } from './lineLoginPostgresStore.js';
 import { registerReferralRoutes } from './referralRoutes.js';
+import { oaFriendUrl } from './oaFriendUrl.js';
 import { registerLineWebhookRoutes } from './lineWebhook.js';
 import { runWorkerOnce } from './worker.js';
 import { MockLineMessagingAdapter } from './lineAdapter.js';
@@ -109,7 +110,7 @@ export function buildApp(injectedRepository?: Repository) {
         ?.query('select basic_id from oa_integrations where enabled order by created_at limit 1')
         .catch(() => null);
       const basicId = found?.rows?.[0]?.basic_id;
-      if (typeof basicId === 'string' && /^@[A-Za-z0-9._-]{2,50}$/.test(basicId)) oaUrl = `https://line.me/R/ti/p/${basicId}`;
+      oaUrl = oaFriendUrl(basicId) || '';
     }
     return { liffId: process.env.LINE_LIFF_CHANNEL_ID || null, oaUrl: oaUrl || null };
   });

@@ -70,6 +70,34 @@ test('invalid referral input is rejected before touching PostgreSQL', async () =
   );
 });
 
+test('the portal click hands back the add-friend link of the OA the link belongs to', async () => {
+  const { oaFriendUrl } = await import('../dist/api/oaFriendUrl.js');
+  assert.equal(oaFriendUrl('@453yfyvc'), 'https://line.me/R/ti/p/@453yfyvc');
+  assert.equal(oaFriendUrl('453yfyvc'), null, 'a basic id without the @ is not a LINE add-friend URL');
+  assert.equal(oaFriendUrl(null), null);
+
+  const clickPool = (oaBasicId) => {
+    const client = {
+      queries: [],
+      query(sql) {
+        this.queries.push(sql);
+        if (/select il\.id/.test(sql)) return Promise.resolve({ rows: [{ id: uuid, workspace_id: uuid, oaId: uuid, oaName: 'heekoom', oaBasicId, staffName: 'Operator' }] });
+        return Promise.resolve({ rows: [] });
+      },
+      release() {}
+    };
+    return { pool: { connect: () => Promise.resolve(client) }, client };
+  };
+
+  const first = clickPool('@oa-one');
+  const clicked = await recordClick(first.pool, randomBytes(32).toString('base64url'));
+  assert.equal(clicked.oaName, 'heekoom');
+  assert.equal(clicked.oaFriendUrl, 'https://line.me/R/ti/p/@oa-one', 'the referral own OA decides the add-friend destination');
+
+  const second = clickPool('not-a-basic-id');
+  assert.equal((await recordClick(second.pool, randomBytes(32).toString('base64url'))).oaFriendUrl, null);
+});
+
 test('PostgreSQL referral wiring keeps tokens hashed and verifies follow evidence from a signed webhook', () => {
   const schema = readFileSync(new URL('../db/migrations/008_multitenant_foundation.sql', import.meta.url), 'utf8');
   assert.match(schema, /create table if not exists staff_invite_links/i);

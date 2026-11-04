@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiUrl } from './apiClient.js';
 
-type ClickResult = { referral: { id: string; oaId: string; status: string }; staffName: string; oaId: string; next: string };
+type ClickResult = { referral: { id: string; oaId: string; status: string }; staffName: string; oaId: string; oaName?: string | null; oaFriendUrl?: string | null; next: string };
 type LineMember = { id: string; displayName: string; role: string };
 
 async function request<T>(url: string, method = 'POST', body?: object): Promise<T> {
@@ -13,7 +13,9 @@ async function request<T>(url: string, method = 'POST', body?: object): Promise<
 }
 
 export default function StaffPortal({ token }: { token: string }) {
-  const [click, setClick] = useState<ClickResult | null>(null); const [member, setMember] = useState<LineMember | null>(null); const [message, setMessage] = useState('กำลังตรวจสอบลิงก์...'); const [loginEnabled, setLoginEnabled] = useState(false); const [busy, setBusy] = useState(false);
+  const [click, setClick] = useState<ClickResult | null>(null); const [member, setMember] = useState<LineMember | null>(null); const [message, setMessage] = useState('กำลังตรวจสอบลิงก์...'); const [loginEnabled, setLoginEnabled] = useState(false); const [busy, setBusy] = useState(false); const [configOaUrl, setConfigOaUrl] = useState<string | null>(null);
+  const friendUrl = click?.oaFriendUrl || configOaUrl;
+  const oaLabel = click?.oaName || click?.oaId || 'กำลังตรวจสอบ';
   useEffect(() => {
     const result = new URLSearchParams(window.location.search).get('lineLogin');
     if (result === 'success') setMessage('ยืนยัน LINE Login แล้ว');
@@ -23,14 +25,17 @@ export default function StaffPortal({ token }: { token: string }) {
     try { previousClick = JSON.parse(sessionStorage.getItem(clickKey) || 'null') as ClickResult | null; } catch { sessionStorage.removeItem(clickKey); }
     if (previousClick) {
       setClick(previousClick);
-      if (result === null) setMessage(`ลิงก์ของ ${previousClick.staffName} · OA ${previousClick.oaId}`);
+      if (result === null) setMessage(`ลิงก์ของ ${previousClick.staffName} · OA ${previousClick.oaName || previousClick.oaId}`);
     } else {
-      void request<ClickResult>(`/api/referrals/${encodeURIComponent(token)}/click`).then(value => { setClick(value); sessionStorage.setItem(clickKey, JSON.stringify(value)); if (result === null) setMessage(`ลิงก์ของ ${value.staffName} · OA ${value.oaId}`); }).catch(error => setMessage(error instanceof Error ? error.message : 'เปิดลิงก์ไม่สำเร็จ'));
+      void request<ClickResult>(`/api/referrals/${encodeURIComponent(token)}/click`).then(value => { setClick(value); sessionStorage.setItem(clickKey, JSON.stringify(value)); if (result === null) setMessage(`ลิงก์ของ ${value.staffName} · OA ${value.oaName || value.oaId}`); }).catch(error => setMessage(error instanceof Error ? error.message : 'เปิดลิงก์ไม่สำเร็จ'));
     }
     void request<{ enabled: boolean }>('/api/line-login/config', 'GET').then(value => setLoginEnabled(value.enabled)).catch(() => setLoginEnabled(false));
     void request<{ member: LineMember }>('/api/line-login/session', 'GET').then(value => setMember(value.member)).catch(() => setMember(null));
+    // Only a fallback: the click response carries the OA the link itself belongs to, which is the
+    // right answer once several OAs are enabled. This one is the server's default OA.
+    void request<{ oaUrl?: string | null }>('/api/config', 'GET').then(value => setConfigOaUrl(value.oaUrl || null)).catch(() => setConfigOaUrl(null));
   }, [token]);
   function startLineLogin() { window.location.assign(apiUrl(`/api/line-login/start?referralToken=${encodeURIComponent(token)}`)); }
   async function logout() { setBusy(true); try { await request('/api/line-login/logout'); setMember(null); setMessage('ออกจากระบบ LINE แล้ว'); } finally { setBusy(false); } }
-  return <main className="staff-portal"><div className="staff-card"><div className="logo"><span>●</span><div><strong>LINE Campaign</strong><small>Member Portal</small></div></div><span className="mode-pill">● LOCAL · DRY RUN</span><p className="eyebrow green">LINE LOGIN v2.1</p><h1>เข้าร่วมแคมเปญ</h1><p className="auth-copy">ลิงก์นี้เชื่อมกับสมาชิก <strong>{click?.staffName || 'กำลังตรวจสอบ...'}</strong> และ OA ใน Workspace เดียวกัน</p><p className="portal-status" role="status">{message}</p><div className="portal-steps"><span className={click ? 'done' : ''}>1. LINK</span><span className={member ? 'done' : ''}>2. LINE LOGIN</span><span className={member ? 'done' : ''}>3. MEMBER</span></div>{member ? <><p className="member-session">เข้าสู่ระบบในชื่อ <strong>{member.displayName}</strong></p><button className="secondary full" onClick={() => void logout()} disabled={busy}>ออกจากระบบ LINE</button></> : <button className="line-login-button full" onClick={startLineLogin} disabled={!click || !loginEnabled || busy}>เข้าสู่ระบบด้วย LINE</button>}<small className="auth-foot">LINE user ID ถูกผูกกับสมาชิกฝั่ง Server · Admin ใช้บัญชีเดิม</small></div></main>;
+  return <main className="staff-portal"><div className="staff-card"><div className="logo"><span>●</span><div><strong>LINE Campaign</strong><small>Member Portal</small></div></div><span className="mode-pill">● LOCAL · DRY RUN</span><p className="eyebrow green">LINE LOGIN v2.1</p><h1>เข้าร่วมแคมเปญ</h1><p className="auth-copy">ลิงก์นี้เชื่อมกับสมาชิก <strong>{click?.staffName || 'กำลังตรวจสอบ...'}</strong> และ OA <strong>{oaLabel}</strong></p><p className="portal-status" role="status">{message}</p><div className="portal-steps"><span className={click ? 'done' : ''}>1. LINK</span><span className={member ? 'done' : ''}>2. LINE LOGIN</span><span className={member ? 'done' : ''}>3. MEMBER</span></div>{member ? <div className="portal-after-login"><p className="member-session">เข้าสู่ระบบในชื่อ <strong>{member.displayName}</strong></p>{friendUrl ? <><p className="auth-copy">ขั้นสุดท้าย: แอด LINE OA เพื่อรับกิจกรรมในแชท ระบบจะยืนยันอัตโนมัติเมื่อคุณแอด</p><a className="line-login-button full" href={friendUrl} rel="noopener" target="_blank">+ เพิ่มเพื่อนที่ LINE OA</a></> : <p className="portal-status">ยังไม่พบลิงก์เพิ่มเพื่อนของ OA นี้ · ตั้งค่า basic_id หรือ LINE_OA_FRIEND_URL ฝั่งเซิร์ฟเวอร์</p>}<button className="secondary full" onClick={() => void logout()} disabled={busy}>ออกจากระบบ LINE</button></div> : <button className="line-login-button full" onClick={startLineLogin} disabled={!click || !loginEnabled || busy}>เข้าสู่ระบบด้วย LINE</button>}<small className="auth-foot">LINE user ID ถูกผูกกับสมาชิกฝั่ง Server · Admin ใช้บัญชีเดิม</small></div></main>;
 }

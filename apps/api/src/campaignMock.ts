@@ -184,7 +184,7 @@ export class CampaignMockStore {
     const referral = this.resolveToken(token);
     const staff = this.member(referral.staffId);
     this.events.push({ id: id(), referralId: referral.id, workspaceId: this.workspaceId, staffId: staff.id, oaId: referral.oaId, type: 'CLICK', occurredAt: now().toISOString() });
-    return { referral: this.safeReferral(referral), staffName: staff.displayName, oaId: referral.oaId, next: 'LINE_LOGIN_MOCK' };
+    return { referral: this.safeReferral(referral), staffName: staff.displayName, oaId: referral.oaId, oaName: null, oaFriendUrl: null, next: 'LINE_LOGIN_MOCK' };
   }
   startLogin(token: string) {
     const referral = this.resolveToken(token);

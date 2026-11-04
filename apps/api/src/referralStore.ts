@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Pool, QueryResultRow } from 'pg';
+import { oaFriendUrl } from './oaFriendUrl.js';
 
 export type ReferralStatus = 'ACTIVE' | 'PAUSED' | 'REVOKED';
 export type ReferralView = {
@@ -200,8 +201,8 @@ export async function recordClick(pool: Pool, token: string) {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const resolved = await client.query<{ id: string; workspace_id: string; oaId: string; staffName: string }>(
-      `select il.id, il.workspace_id, il.oa_integration_id as "oaId", u.display_name as "staffName"
+    const resolved = await client.query<{ id: string; workspace_id: string; oaId: string; oaName: string; oaBasicId: string; staffName: string }>(
+      `select il.id, il.workspace_id, il.oa_integration_id as "oaId", oa.display_name as "oaName", oa.basic_id as "oaBasicId", u.display_name as "staffName"
        from staff_invite_links il
        join admin_users u on u.id=il.admin_user_id and u.workspace_id=il.workspace_id and u.active=true
        join workspace_memberships m on m.admin_user_id=u.id and m.workspace_id=u.workspace_id and m.status='ACTIVE'
@@ -222,6 +223,8 @@ export async function recordClick(pool: Pool, token: string) {
       referral: { id: referral.id, oaId: referral.oaId, status: 'ACTIVE' as const },
       staffName: referral.staffName,
       oaId: referral.oaId,
+      oaName: referral.oaName,
+      oaFriendUrl: oaFriendUrl(referral.oaBasicId),
       next: 'LINE_LOGIN'
     };
   } catch (error) {
