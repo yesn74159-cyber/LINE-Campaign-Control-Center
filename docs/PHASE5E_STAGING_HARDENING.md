@@ -170,7 +170,7 @@ bash deploy/install-backup-cron.sh --run-now
 - [x] cloud read-only audit กับ staging จริง (2026-11-01): migrations 001–012 ครบ, 25 ตารางครบ ไม่มีแปลกปลอม, RLS เปิดเฉพาะ 3 ตาราง line_customer_* แบบ 0 policy, role line_ccc เป็น superuser+BYPASSRLS (posture เดิมที่ Tier A/B จะ tighten), FK ไร้ leading index 25 ตัว
 - [x] backup/restore drill บน staging จริง (2026-11-01): dump 93,599 bytes ผ่าน PGDMP+sha256, restore เข้า drill DB แล้วนับแถวตรงกับ live เป๊ะ ก่อน drop
 - [x] nightly backup script + cron installer (2026-11-04): ซ้อมครบทั้ง pass/fail/rotation/restore บน Docker ในเครื่อง ตาม runbook ข้างบน
-- [ ] ยังไม่ได้ติดตั้ง cron บน VM — ต้องรัน `bash deploy/install-backup-cron.sh --run-now` ที่ `/srv/line-ccc-staging` ด้วย user `ubuntu`
+- [x] cron ติดตั้งจริงบน staging VM (2026-11-04, `a1e59c5`): `30 20 * * *`, proof run เขียน `nightly-20261104T113014Z.dump` = 123,491 bytes, log `nightly OK bytes=123491 tables=27`, `sha256sum -c --strict` = OK, `systemctl is-active/is-enabled cron` = active/enabled, dump เก่า `pre014-*`/`post013-*` ยังอยู่ครบ
 
 ## Limits ที่ยังค้าง
 
