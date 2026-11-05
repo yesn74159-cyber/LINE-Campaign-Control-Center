@@ -17,7 +17,7 @@ function csrfToken() {
 }
 
 function recipientLabel(key: string) {
-  if (key === '__campaign__') return 'PREVIEW · no recipient';
+  if (key === '__campaign__') return 'ยังไม่มีผู้รับ';
   return key.length > 12 ? `${key.slice(0, 7)}…${key.slice(-4)}` : key;
 }
 
@@ -66,7 +66,7 @@ export default function DeliveryLedger({ jobId, canWrite }: { jobId: string; can
   };
 
   return <section className="panel table-panel">
-    <div className="panel-head"><div><p className="eyebrow">OUTBOX · PER RECIPIENT</p><h3>Delivery ledger</h3></div><button className="text-btn" onClick={() => void load()}>↻ Refresh</button></div>
+    <div className="panel-head"><div><p className="eyebrow">สถานะผู้รับ</p><h3>รายละเอียดการส่งต่อ</h3></div><button className="text-btn" onClick={() => void load()}>↻ รีเฟรช</button></div>
     <p className="form-note">บันทึกสถานะต่อผู้รับ พร้อม retry key · ไม่มีChannel Secret หรือ Access Token ใน ledger</p>
     {error && <p role="alert" className="auth-error">{error}</p>}
     {rows.length > 0 ? <div className="tenant-table-wrap"><table className="tenant-table">
@@ -79,6 +79,6 @@ export default function DeliveryLedger({ jobId, canWrite }: { jobId: string; can
         <td>{new Date(row.updatedAt).toLocaleString('th-TH')}</td>
         <td>{row.status === 'UNKNOWN' && canWrite && <div className="row-actions"><button disabled={busy} onClick={() => void reconcile(row.id, 'SENT')}>ยืนยันว่าส่งแล้ว</button><button disabled={busy} onClick={() => void reconcile(row.id, 'FAILED')}>ทำเครื่องหมายล้มเหลว</button></div>}</td>
       </tr>)}</tbody>
-    </table></div> : <div className="empty-inline">ยังไม่มี delivery ในงานนี้ · รัน DRY RUN เพื่อสร้าง ledger</div>}
+    </table></div> : <div className="empty-inline">ยังไม่มีรายการส่งต่อในงานนี้ · ทดลองส่งก่อนเพื่อสร้างรายการ</div>}
   </section>;
 }

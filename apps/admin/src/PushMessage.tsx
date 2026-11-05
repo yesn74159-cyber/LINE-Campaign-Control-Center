@@ -17,6 +17,7 @@ type FlexSeed = { flex: Record<string, unknown>; label?: string } | null;
 const MAX_CHARS = 5000;
 const RECIPIENT_PATTERN = /^U[0-9a-f]{32}$/i;
 const MANUAL_RECIPIENT = '__manual__';
+const maskKey = (key: string) => (key.length > 12 ? `${key.slice(0, 5)}…${key.slice(-4)}` : key);
 
 /** The strings a card will show, flattened for the preview bubble and the length counter. */
 function collectFlexTexts(value: unknown, out: string[] = []): string[] {
@@ -132,10 +133,10 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
 
   return <section className="stack">
     <div className="section-intro"><div>
-      <p className="eyebrow green">SEND TO ONE PERSON</p>
+      <p className="eyebrow green">ส่งหาลูกค้ารายคน</p>
       <h2>ส่งข้อความตรงถึงลูกค้า 1 คน</h2>
       <p>เขียนข้อความ → กด "ดูตัวอย่างก่อน" → พิมพ์ SEND → ส่งเข้า LINE ของผู้รับ</p>
-    </div><span className={`mode-pill ${isLive ? 'live' : ''}`}>{preview ? `โหมด ${preview.mode}` : liveSendEnabled ? 'เลือกโหมดได้ในขั้นที่ 2' : 'โหมดทดสอบ (DRY RUN)'}</span></div>
+    </div><span className={`mode-pill ${isLive ? 'live' : ''}`}>{preview ? (preview.mode === 'LIVE' ? 'โหมดส่งจริง' : 'โหมดทดสอบ') : liveSendEnabled ? 'เลือกโหมดได้ในขั้นที่ 2' : 'โหมดทดสอบ (DRY RUN)'}</span></div>
 
     {enabledOas.length === 0 && <section className="panel"><h3>ยังไม่มี LINE OA ที่เปิดใช้งาน</h3><p>ไปหน้า "LINE OA" แล้วเปิดใช้งานบัญชีที่ต้องการก่อน</p></section>}
 
@@ -148,7 +149,7 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
         </select>
         <label htmlFor="push-recipient">ลูกค้า (เฉพาะคนที่อนุญาตให้ส่ง)</label>
         <select id="push-recipient" value={recipientSelect} onChange={(event) => { setRecipientSelect(event.target.value); resetFlow(); }}>
-          {consented.map((item) => <option value={item.lineUserKey} key={item.lineUserKey}>{item.displayName || 'ลูกค้า'} · {item.lineUserKey}</option>)}
+          {consented.map((item) => <option value={item.lineUserKey} key={item.lineUserKey}>{item.displayName || 'ลูกค้า'} · LINE ID {maskKey(item.lineUserKey)}</option>)}
           <option value={MANUAL_RECIPIENT}>กรอก LINE User ID เอง</option>
         </select>
         {recipientSelect === MANUAL_RECIPIENT && <>
@@ -187,11 +188,11 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
 
     {preview && <section className="panel push-preview">
       <div className="panel-head"><div><p className="eyebrow purple-text">ขั้นที่ 3 · ยังไม่ได้ส่ง</p><h3>ตรวจข้อความก่อนยืนยัน</h3></div>
-        <span className={`tag ${preview.mode === 'LIVE' ? 'success' : 'dry'}`}>{preview.mode === 'LIVE' ? 'ส่งเข้า LINE จริง' : 'DRY RUN · ไม่ยิง LINE'}</span></div>
+        <span className={`tag ${preview.mode === 'LIVE' ? 'success' : 'dry'}`}>{preview.mode === 'LIVE' ? 'ส่งเข้า LINE จริง' : 'ทดสอบ · ไม่ยิง LINE'}</span></div>
       <div className="push-bubble"><strong>{preview.oaDisplayName}</strong>{preview.messageType === 'flex'
         ? <div className="push-flex-preview"><FlexPreview card={preview.flex ?? null} fallback="การ์ดนี้แสดงผลไม่ได้ · กลับไปตรวจ JSON ใน Flex Studio" /><small>การ์ด Flex · altText (สิ่งที่ขึ้นในแจ้งเตือน): {preview.text}</small></div>
         : <p>{preview.text}</p>}</div>
-      <p className="push-meta">ผู้รับ: {preview.recipient}{preview.recipientName ? ` (${preview.recipientName})` : ''} · {preview.messageType === 'flex' ? 'การ์ด Flex' : 'ข้อความ'} · อยู่ได้อีก {minutesLeft} นาที</p>
+      <p className="push-meta">ผู้รับ: {preview.recipientName || `LINE ID ${maskKey(preview.recipient)}`} · {preview.messageType === 'flex' ? 'การ์ด Flex' : 'ข้อความ'} · อยู่ได้อีก {minutesLeft} นาที</p>
       {preview.mode === 'LIVE' && <p className="push-meta">LINE ยืนยันว่าผู้รับรายนี้ยังเปิดรับข้อความ (ตรวจจากโปรไฟล์ก่อนส่ง)</p>}
       {preview.mode === 'DRY_RUN' && <p className="form-note">โหมดทดสอบ: ระบบจะบันทึกหลักฐานจำลองเท่านั้น ไม่มีการส่งเข้า LINE</p>}
       {preview.messageType === 'flex' && <p className="form-note">อยากโชว์ให้เพื่อนดูในแชท: ส่งการ์ดนี้เข้า LINE ของคุณก่อน แล้วในแอป LINE ให้กดค้างที่ข้อความ → “ส่งต่อ” เลือกห้องเพื่อน (LINE ไม่มีปุ่มแชร์การ์ดจากหน้าเว็บ)</p>}
@@ -210,7 +211,7 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
       <div className="table-head"><strong>ประวัติการส่งตรง</strong><span>{history.length} รายการล่าสุด</span></div>
       {history.length ? history.map((row) => <div className="audit-row" key={row.id}>
         <span className={`audit-dot ${row.status === 'SENT' ? 'green-dot' : ''}`} />
-        <div><strong>{statusLabel[row.status] || row.status} · {row.mode}</strong><small>{row.recipientName || row.recipient} · {row.messageType === 'flex' ? '[การ์ด Flex] ' : ''}"{row.text.slice(0, 60)}{row.text.length > 60 ? '…' : ''}"{row.error ? ` · ${row.error}` : ''}</small></div>
+        <div><strong>{statusLabel[row.status] || row.status} · {row.mode === 'LIVE' ? 'ส่งจริง' : 'ทดสอบ'}</strong><small>{row.recipientName || `LINE ID ${maskKey(row.recipient)}`} · {row.messageType === 'flex' ? '[การ์ด Flex] ' : ''}"{row.text.slice(0, 60)}{row.text.length > 60 ? '…' : ''}"{row.error ? ` · ${row.error}` : ''}</small></div>
         <time>{new Date(row.createdAt).toLocaleString('th-TH')}</time>
       </div>) : <div className="empty-inline">ยังไม่มีการส่งข้อความตรง</div>}
     </section>

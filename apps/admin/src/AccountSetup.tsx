@@ -28,7 +28,7 @@ export default function AccountSetup() {
 
   return <div className="auth-screen"><div className="auth-card">
     <div className="logo"><span>●</span><div><strong>LINE Campaign</strong><small>Control Center</small></div></div>
-    <p className="eyebrow green">STAGING ACCOUNT</p>
+    <p className="eyebrow green">บัญชีผู้ใช้</p>
     <h1>ตั้งรหัสผ่าน</h1>
     {!token ? <p className="auth-error">ลิงก์นี้ไม่สมบูรณ์ กรุณาขอลิงก์ใหม่จาก Owner หรือ Admin</p>
       : done ? <>

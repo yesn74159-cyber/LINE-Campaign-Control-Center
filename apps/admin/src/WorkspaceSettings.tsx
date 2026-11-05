@@ -12,6 +12,7 @@ type Channel = {
 type Session = { role: string; email: string };
 type SetupLink = { url: string; expiresAt: string; email: string; kind: string };
 
+const roleLabel = (role: string) => ({ owner: 'เจ้าของ', admin: 'ผู้ดูแล', editor: 'ผู้แก้ไข', reviewer: 'ผู้อนุมัติ', viewer: 'ผู้ชม' } as Record<string, string>)[role] || role;
 const isPersistedMemberId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 async function workspaceRequest<T>(url: string, method = 'GET', body?: object): Promise<T> {
@@ -152,16 +153,18 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
 
   return <section className="stack">
     <div className="section-intro"><div>
-      <p className="eyebrow green">MULTI-WORKSPACE / DRY RUN</p>
+      <p className="eyebrow green">หลาย Workspace · โหมดทดสอบ</p>
       <h2>Workspace &amp; LINE OA Settings</h2>
       <p>จัดการข้อมูลบริษัท ทีมงาน และ Channel ของ LINE OA โดยแยกตาม Workspace</p>
-    </div><span className="tag dry">LINE SEND DISABLED</span></div>
+    </div><span className="tag dry">ปิดการส่ง LINE</span></div>
     {message && <section className="panel" role="status">{message}</section>}
     <ConnectLineOa isOwner={isOwner} />
     <section className="panel">
-      <p className="eyebrow green">WORKSPACE</p><h3>ตั้งค่าบริษัท</h3>
-      <p>Workspace ID: <code>{workspace?.id || '-'}</code></p>
-      <p>Slug: <code>{workspace?.slug || '-'}</code> | Mode: {workspace?.mode || 'DRY_RUN'}</p>
+      <p className="eyebrow green">พื้นที่ทำงาน</p><h3>ตั้งค่าบริษัท</h3>
+      <details className="advanced"><summary>รหัสภายในของ Workspace</summary>
+        <p>Workspace ID: <code>{workspace?.id || '-'}</code></p>
+        <p>Slug: <code>{workspace?.slug || '-'}</code> | Mode: {workspace?.mode || 'DRY_RUN'}</p>
+      </details>
       <form className="tenant-form" onSubmit={saveWorkspace}>
         <label htmlFor="workspace-name">ชื่อบริษัท / Workspace</label>
         <input id="workspace-name" value={name} onChange={e => setName(e.target.value)}
@@ -170,16 +173,16 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
       </form>
     </section>
     <section className="panel">
-      <p className="eyebrow green">STAFF ACCESS</p><h3>สมาชิก Workspace</h3>
+      <p className="eyebrow green">สมาชิกและสิทธิ์</p><h3>สมาชิก Workspace</h3>
        <p>บัญชีใน Workspace นี้เท่านั้น · LINE Login เป็น Mock และ Live ถูกปิด</p>
        <form className="tenant-form member-invite-form" onSubmit={inviteMember}>
          <label htmlFor="member-name">ชื่อสมาชิก</label>
          <input id="member-name" value={inviteName} onChange={e => setInviteName(e.target.value)} required maxLength={120} disabled={saving}/>
          <label htmlFor="member-email">Email สมาชิก</label>
          <input id="member-email" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} required maxLength={320} disabled={saving}/>
-         <label htmlFor="member-role">Role</label>
+         <label htmlFor="member-role">สิทธิ์</label>
          <select id="member-role" value={inviteRole} onChange={e => setInviteRole(e.target.value)} disabled={saving}>
-           {['owner','admin','editor','reviewer','viewer'].map(role => <option value={role} key={role}>{role}</option>)}
+           {['owner','admin','editor','reviewer','viewer'].map(role => <option value={role} key={role}>{roleLabel(role)}</option>)}
          </select>
          <button className="primary" disabled={saving}>เชิญสมาชิก</button>
        </form>
@@ -187,14 +190,14 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
          <thead><tr><th>ชื่อ</th><th>Email</th><th>สิทธิ์</th><th>สถานะ</th><th>การจัดการ</th></tr></thead>
          <tbody>{members.map(member =>
            <tr key={member.id}><td>{member.displayName}</td><td>{member.email}</td>
-             <td><select aria-label={`Role ${member.email}`} value={member.role} disabled={saving || member.id === (session as Session & { id?: string }).id} onChange={e => void updateMember(member, { role: e.target.value })}>{['owner','admin','editor','reviewer','viewer'].map(role => <option value={role} key={role}>{role}</option>)}</select></td>
-             <td><span className={`tag ${member.status === 'ACTIVE' ? 'success' : member.status === 'SUSPENDED' ? 'paused' : 'dry'}`}>{member.status}</span></td>
-             <td>{member.status === 'INVITED' ? (isPersistedMemberId(member.id) ? <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'INVITE')}>คัดลอกลิงก์เชิญ</button> : <span className="tag dry">MOCK</span>) : member.status === 'SUSPENDED' ? <button className="mini-btn" disabled={saving} onClick={() => void updateMember(member, { status: 'ACTIVE' })}>Reactivate</button> : <>{isPersistedMemberId(member.id) && <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'RESET')}>ส่งลิงก์รีเซ็ต</button>}<button className="danger-btn" disabled={saving || member.id === (session as Session & { id?: string }).id} onClick={() => void updateMember(member, { status: 'SUSPENDED' })}>Suspend</button></>}</td></tr>
+             <td><select aria-label={`Role ${member.email}`} value={member.role} disabled={saving || member.id === (session as Session & { id?: string }).id} onChange={e => void updateMember(member, { role: e.target.value })}>{['owner','admin','editor','reviewer','viewer'].map(role => <option value={role} key={role}>{roleLabel(role)}</option>)}</select></td>
+             <td><span className={`tag ${member.status === 'ACTIVE' ? 'success' : member.status === 'SUSPENDED' ? 'paused' : 'dry'}`}>{({ ACTIVE: 'ใช้งาน', SUSPENDED: 'ระงับ', INVITED: 'รอตั้งรหัสผ่าน' } as Record<string, string>)[member.status] || member.status}</span></td>
+             <td>{member.status === 'INVITED' ? (isPersistedMemberId(member.id) ? <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'INVITE')}>คัดลอกลิงก์เชิญ</button> : <span className="tag dry">ตัวอย่าง</span>) : member.status === 'SUSPENDED' ? <button className="mini-btn" disabled={saving} onClick={() => void updateMember(member, { status: 'ACTIVE' })}>เปิดใช้งานอีกครั้ง</button> : <>{isPersistedMemberId(member.id) && <button className="mini-btn" disabled={saving} onClick={() => void issueAccountLink(member, 'RESET')}>ส่งลิงก์รีเซ็ต</button>}<button className="danger-btn" disabled={saving || member.id === (session as Session & { id?: string }).id} onClick={() => void updateMember(member, { status: 'SUSPENDED' })}>ระงับบัญชี</button></>}</td></tr>
          )}</tbody>
        </table></div>
     </section>
     {setupLink && <section className="panel" role="status">
-      <p className="eyebrow green">ONE-TIME LINK</p>
+      <p className="eyebrow green">ลิงก์ใช้ครั้งเดียว</p>
       <h3>{setupLink.kind} · {setupLink.email}</h3>
       <p>ลิงก์นี้ใช้ได้ครั้งเดียวและหมดอายุ {setupLink.expiresAt ? new Date(setupLink.expiresAt).toLocaleString('th-TH') : '-'} — ระบบไม่เก็บลิงก์นี้ไว้แสดงซ้ำ</p>
       <input readOnly value={setupLink.url} aria-label="ลิงก์ตั้งรหัสผ่าน" onFocus={e => e.currentTarget.select()} />
@@ -204,7 +207,7 @@ export default function WorkspaceSettings({ session }: { session: Session }) {
       </div>
     </section>}
     <section className="panel">
-      <p className="eyebrow green">CHANNEL METADATA</p><h3>LINE OA Connections</h3>
+      <p className="eyebrow green">ข้อมูลช่องทาง LINE</p><h3>การเชื่อมต่อ LINE OA</h3>
       <p>เลือก OA ที่เพิ่มไว้ในเมนู LINE OA เพื่อบันทึก Channel ID และ Provider ID</p>
       <p><strong>ยังไม่รับ Token / Secret ในหน้านี้</strong> และไม่มีการเรียก API ของ LINE</p>
       <form className="tenant-form" onSubmit={saveChannel}>

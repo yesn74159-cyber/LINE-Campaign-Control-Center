@@ -77,8 +77,8 @@ export default function ConnectLineOa({ isOwner }: { isOwner: boolean }) {
   }
 
   return <section className="panel">
-    <p className="eyebrow green">LINE OA CONNECT / OWNER ONLY</p>
-    <h3>LINE OA connection status</h3>
+    <p className="eyebrow green">เชื่อมต่อ LINE OA · เฉพาะ Owner</p>
+    <h3>สถานะการเชื่อมต่อ LINE OA</h3>
     <p>กรอก Channel Access Token และ Channel Secret ของ Messaging API channel เพื่อผูก OA จริงกับ Workspace นี้</p>
     <p className="form-note"><strong>OWNER ONLY · ENCRYPTED IN SERVER VAULT</strong> · ค่า secret เข้ารหัสเก็บฝั่ง server, ไม่ถูกแสดงกลับ และยังไม่ส่งข้อความจริงจนกว่าจะเปิดโหมด Live</p>
     {!isOwner && <p>เฉพาะ Owner ของ Workspace เท่านั้นที่ดูสถานะและเชื่อมต่อ LINE OA ได้</p>}

@@ -38,6 +38,14 @@ nav { margin-top: 26px; display: grid; gap: 5px; } nav button { border: 0; backg
 .oa-form input { min-width:0; }
 .form-note { margin:0; color:#789187; font-size:12px; }
 .oa-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.oa-card .oa-actions, .oa-card .oa-summary { grid-column:1 / -1; }
+.oa-card .oa-summary { margin:8px 0 0; color:#52776a; }
+details.advanced { border:1px solid #e1ece7; border-radius:12px; background:#fff; padding:14px 16px; }
+details.advanced > summary { cursor:pointer; color:#6c8980; font-size:12px; font-weight:700; }
+details.advanced > summary::marker { color:#9ab5ab; }
+details.advanced > *:not(summary) { margin-top:12px; }
+.oa-card details.advanced { grid-column:1 / -1; border:0; background:transparent; padding:0; }
+.oa-card details.advanced > summary { margin-top:10px; }
 .oa-limits { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)) auto; gap:10px; align-items:end; margin-top:12px; padding-top:12px; border-top:1px solid #eef5f1; }
 .oa-limits label { display:grid; gap:6px; color:#668278; font-size:12px; font-weight:700; }
 .oa-limits input { min-width:0; }

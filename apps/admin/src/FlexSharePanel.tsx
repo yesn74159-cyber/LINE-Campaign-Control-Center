@@ -17,7 +17,7 @@ export default function FlexSharePanel({ card, liffId }: { card: FlexCard; liffI
     catch { setCopied('เบราว์เซอร์ไม่อนุญาตให้คัดลอกอัตโนมัติ · แตะที่ลิงก์แล้วคัดลอกเอง'); }
   };
   return <section className="panel share-panel">
-    <div className="panel-head"><div><p className="eyebrow green">SHARE FROM YOUR PHONE · LIFF</p><h3>ส่งการ์ดในชื่อคุณ ให้เพื่อนหลายคนพร้อมกัน</h3></div><span className="tag dry">ไม่ผ่าน LINE OA</span></div>
+    <div className="panel-head"><div><p className="eyebrow green">แชร์จากมือถือ · LIFF</p><h3>ส่งการ์ดในชื่อคุณ ให้เพื่อนหลายคนพร้อมกัน</h3></div><span className="tag dry">ไม่ผ่าน LINE OA</span></div>
     {/* A card with unfilled slots is refused by the server validator and by LINE, so handing
         over a link that cannot send only costs the operator a trip to their phone. */}
     {leftovers.length > 0 ? <>

@@ -136,7 +136,7 @@ test('manual push page previews first and sends only after typing SEND', async (
   assert.equal(fixture.bodies.preview.mode, 'DRY_RUN');
   assert.ok(fixture.requests.some((item) => item.path === '/api/messages/push/send' && item.csrf === 'qa-token'));
   assert.equal(await page.locator('#push-text').inputValue(), '', 'the composer resets after a send');
-  await page.getByText('ส่งแล้ว · DRY_RUN').waitFor();
+  await page.getByText('ส่งแล้ว · ทดสอบ').waitFor();
   const visible = await page.locator('body').innerText();
   assert.ok(!/channel access token|Bearer /.test(visible), 'no credential text is rendered');
   assert.deepEqual(errors, []);
@@ -275,12 +275,12 @@ test('a hostile Flex card renders as text, not as markup, in the preview', async
 
 test('the dashboard hero states the gate as text, never as raw markup', async (t) => {
   const closed = await openApp(t, harness());
-  assert.equal((await closed.page.locator('.hero-orb').innerText()).replace(/\s+/g, ' ').trim(), 'DRY RUN SAFE MODE');
+  assert.equal((await closed.page.locator('.hero-orb').innerText()).replace(/\s+/g, ' ').trim(), 'ทดสอบ ไม่ส่ง ยังไม่ส่งออก LINE');
   assert.deepEqual(closed.errors, []);
 
   const open = await openApp(t, harness({ liveSendEnabled: true }));
   const orb = await open.page.locator('.hero-orb').innerText();
-  assert.equal(orb.replace(/\s+/g, ' ').trim(), 'LIVE READY SEND GATE OPEN');
+  assert.equal(orb.replace(/\s+/g, ' ').trim(), 'ส่งจริง พร้อม ประตูส่งจริงเปิด');
   assert.equal(await open.page.locator('.hero-orb.live').count(), 1, 'the orb switches to the live colour');
   assert.deepEqual(open.errors, []);
   console.log('HERO_ORB_PASS');
