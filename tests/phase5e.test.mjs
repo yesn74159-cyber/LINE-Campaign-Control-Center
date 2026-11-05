@@ -396,7 +396,7 @@ test('staging smoke fails without admin credentials, still runs the admin path, 
     assert.match(blank.stdout, /PASS health responds/);
     assert.match(blank.stdout, /PASS health db reachable — db=not_configured/);
     assert.match(blank.stdout, /PASS APP_MODE is DRY_RUN/);
-    assert.match(blank.stdout, /PASS LINE Login stays disabled/);
+    assert.match(blank.stdout, /PASS LINE Login matches expectation — enabled=false expected=false/);
     assert.match(blank.stdout, /PASS dashboard requires a session/);
     assert.match(blank.stdout, /FAIL admin credentials provided/);
     assert.doesNotMatch(blank.stdout, /PASS admin login/, 'a run without credentials must not touch the admin surface');

@@ -90,9 +90,11 @@ worker ไม่ได้เปิดพอร์ต: ทุกลูปจะ�
 ## Smoke, backup, restore, audit
 
 ```bash
-# smoke (read-only; ต้องใส่ admin credential — ไม่ใส่ = FAIL ไม่ใช่ skip)
+# smoke (read-only; 20 เช็ค — ต้องใส่ admin credential, ไม่ใส่ = FAIL ไม่ใช่ skip)
+# staging เปิด LINE Login ไว้สำหรับ referral portal จึงต้องประกาศ SMOKE_EXPECT_LINE_LOGIN=1
+# ไม่งั้นเช็ค LINE Login จะ FAIL (ค่า default คือคาดว่า "ปิด")
 SMOKE_BASE_URL=http://127.0.0.1:8787 SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... \
-  npm run smoke:staging
+  SMOKE_EXPECT_LINE_LOGIN=1 npm run smoke:staging
 
 # backup ก่อน migration ทุกครั้ง
 BACKUP_DATABASE_URL=... npm run db:backup -- --out staging-backups --confirm

@@ -26,7 +26,7 @@ RELEASE_TAG=<tag-ก่อนหน้า> bash deploy/release.sh --no-build
 ```bash
 curl -sS https://66t.online/health                     # ok:true, db:up, mode:DRY_RUN
 SMOKE_BASE_URL=https://66t.online SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... \
-  npm run smoke:staging                                # 21/21
+  SMOKE_EXPECT_LINE_LOGIN=1 npm run smoke:staging      # 20/20
 docker ps --filter name=line-ccc --format '{{.Names}}\t{{.Image}}'
 ```
 

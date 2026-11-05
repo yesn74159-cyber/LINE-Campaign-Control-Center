@@ -11,11 +11,20 @@ const email = (process.env.SMOKE_ADMIN_EMAIL || '').trim();
 const password = process.env.SMOKE_ADMIN_PASSWORD || '';
 // The worker writes a heartbeat on every loop (P0-6) and audits one every five minutes.
 const workerIdleMinutes = Number(process.env.SMOKE_WORKER_IDLE_MINUTES || 15);
+// LINE Login is deliberately on for the referral portal, so the environment has to say so.
+// An unset variable keeps the historical expectation (off) instead of quietly passing.
+const expectLineLogin = process.env.SMOKE_EXPECT_LINE_LOGIN === '1';
 const results = [];
 
 function record(name, ok, detail) {
   results.push({ name, ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
+}
+
+// Caddy and Fastify both add fixed headers, so one header can arrive several times and
+// fetch joins them with ", ". Every value must agree; a contradictory pair is a real fault.
+function headerValues(response, name) {
+  return (response.headers.get(name) || '').split(',').map((value) => value.trim()).filter(Boolean);
 }
 
 async function get(path, init = {}) {
@@ -34,13 +43,14 @@ async function main() {
   record('health db reachable', healthBody.db === expectedDb, `db=${healthBody.db}`);
   record('APP_MODE is DRY_RUN', allowLive ? healthBody.mode === 'DRY_RUN' || healthBody.mode === 'LIVE' : healthBody.mode === 'DRY_RUN', `mode=${healthBody.mode}`);
   record('persistence reported', typeof healthBody.persistence === 'string', `persistence=${healthBody.persistence}`);
-  record('nosniff header', health.headers.get('x-content-type-options') === 'nosniff');
-  record('frame deny header', health.headers.get('x-frame-options') === 'DENY');
+  record('nosniff header', headerValues(health, 'x-content-type-options').includes('nosniff'));
+  const frameOptions = headerValues(health, 'x-frame-options');
+  record('frame deny header', frameOptions.length > 0 && frameOptions.every((value) => value === 'DENY'), frameOptions.length > 1 ? `set ${frameOptions.length}x` : undefined);
 
   const loginConfig = await get('/api/line-login/config');
   const loginBody = await loginConfig.json().catch(() => null);
   record('LINE Login config reachable', loginConfig.ok && typeof loginBody?.enabled === 'boolean', `enabled=${loginBody?.enabled}`);
-  record('LINE Login stays disabled', loginBody?.enabled === false);
+  record('LINE Login matches expectation', loginBody?.enabled === expectLineLogin, `enabled=${loginBody?.enabled} expected=${expectLineLogin} (SMOKE_EXPECT_LINE_LOGIN)`);
 
   const unauthenticated = await get('/api/dashboard');
   record('dashboard requires a session', unauthenticated.status === 401, `HTTP ${unauthenticated.status}`);
