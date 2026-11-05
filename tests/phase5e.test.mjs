@@ -481,6 +481,11 @@ test('every service runs a tagged image so a release can be rolled back', () => 
 
   const release = read('deploy/release.sh');
   assert.match(release, /compose build api admin/);
+  assert.ok(
+    release.indexOf('export RELEASE_TAG="$tag"') !== -1 &&
+      release.indexOf('export RELEASE_TAG="$tag"') < release.indexOf('compose build api admin'),
+    'the new tag must be exported before the build, otherwise compose tags the image with the old release and overwrites it'
+  );
   assert.match(release, /docker image inspect "\$image"/, 'a missing tag must fail before the stack is recreated');
   // The tag lands in the same file compose reads, without clobbering the rest of the secrets.
   assert.match(release, /grep -v '\^RELEASE_TAG=' "\$ENV_FILE"/);

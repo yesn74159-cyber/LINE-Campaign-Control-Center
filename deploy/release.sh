@@ -33,6 +33,11 @@ esac
 
 compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
 
+# compose resolves the image tag from the env file, whose RELEASE_TAG is still the running
+# release until the rewrite below. Without this the build lands on that old tag and
+# overwrites the image the running stack (and a rollback) still depends on.
+export RELEASE_TAG="$tag"
+
 if [ "${1:-}" != "--no-build" ]; then
   compose build api admin
 fi
