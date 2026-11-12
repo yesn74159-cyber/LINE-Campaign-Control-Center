@@ -128,10 +128,10 @@ export default function LiffSharePage() {
       return <div className="auth-screen"><div className="auth-card"><h1>ยังไม่ตั้งค่า LINE OA บนเซิร์ฟเวอร์</h1><p className="auth-copy">เปิดใช้งานบัญชี OA ในหน้าบัญชี LINE OA หรือใส่ LINE_OA_FRIEND_URL ใน .env.staging แล้วเริ่ม container API ใหม่</p></div></div>;
     }
     return <div className="share-screen">
-      <header className="share-head"><p className="eyebrow green">LINE OA</p><h1>เพิ่มเพื่อนเพื่อรับกิจกรรม</h1><p>{oaName ? `บัญชี ${oaName} · ` : ''}การ์ดที่เพื่อนส่งให้พาเข้ามาถึงหน้าแชร์โดยไม่มีการ์ดแนบมา · กดด้านล่างเพื่อเป็นผู้ติดตาม LINE OA แล้วรอรับโปรโมชั่นในแชท</p></header>
+      <header className="share-head"><p className="eyebrow green">LINE OA</p><h1>เพิ่มเพื่อนเพื่อรับกิจกรรม</h1><p>{oaName ? `บัญชี ${oaName} · ` : ''}กดปุ่มด้านล่างเพื่อเพิ่มเพื่อนกับ LINE OA แล้วรอรับโปรโมชั่นในแชท</p></header>
       <section className="share-actions">
+        <ol className="share-steps"><li>กด “เพิ่มเพื่อนที่ LINE OA”</li><li>กด “เพิ่มเพื่อน” ในแอป LINE</li><li>กลับมาที่แชทเพื่อรับโปรโมชั่น</li></ol>
         <a className="primary full" href={oaUrl} rel="noopener">เพิ่มเพื่อนที่ LINE OA</a>
-        <p className="form-note">ถ้าลิงก์นี้ควรมีการ์ดมาด้วย ให้กลับไปกด “แชร์จากมือถือ (LIFF)” ใน Flex Studio แล้วส่งใหม่ทั้งลิงก์</p>
       </section>
     </div>;
   }

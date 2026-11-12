@@ -197,3 +197,14 @@ test('the customer list is scoped by the picked OA instead of mixing every provi
   assert.match(push, /ยังไม่มีลูกค้าที่ติดตาม OA นี้/);
   assert.match(push, /history\.filter\(\(row\) => row\.oaId === selectedOa\.id\)/);
 });
+
+test('the shared add-friend page speaks to the customer, not the operator', async () => {
+  const fs = await import('node:fs');
+  const page = fs.readFileSync(new URL('../apps/admin/src/LiffSharePage.tsx', import.meta.url), 'utf8');
+  // A link from แจกลิงก์ carries no card, so whoever opens it is a customer. Flex Studio
+  // instructions belong on the operator's screen, never on the page handed to a customer.
+  assert.doesNotMatch(page, /การ์ดที่เพื่อนส่งให้พาเข้ามาถึงหน้าแชร์โดยไม่มีการ์ดแนบมา/);
+  assert.doesNotMatch(page, /ให้กลับไปกด “แชร์จากมือถือ \(LIFF\)” ใน Flex Studio/);
+  assert.match(page, /<ol className="share-steps">/);
+  assert.match(page, /กลับมาที่แชทเพื่อรับโปรโมชั่น/);
+});
