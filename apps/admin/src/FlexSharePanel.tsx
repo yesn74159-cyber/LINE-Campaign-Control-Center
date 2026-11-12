@@ -8,9 +8,9 @@ const STEPS = [
   'เพื่อนเห็นการ์ดจากชื่อคุณ ไม่ใช่จาก OA · กดปุ่มในการการ์ดจะพาเข้า OA'
 ];
 
-export default function FlexSharePanel({ card, liffId }: { card: FlexCard; liffId: string }) {
+export default function FlexSharePanel({ card, liffId, oaBasicId }: { card: FlexCard; liffId: string; oaBasicId?: string | null }) {
   const [copied, setCopied] = useState('');
-  const link = buildShareLink(liffId, card);
+  const link = buildShareLink(liffId, card, oaBasicId);
   const leftovers = findPlaceholders(card);
   const copy = async () => {
     try { await navigator.clipboard.writeText(link); setCopied('คัดลอกแล้ว'); }

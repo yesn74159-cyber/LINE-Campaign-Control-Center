@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import FlexPreview from './FlexPreview.js';
-import { buildShareLink, decodeShareLink, textShareLink, type FlexCard } from './liffShare.js';
+import { buildShareLink, decodeShareLink, shareLinkOa, textShareLink, type FlexCard } from './liffShare.js';
 
 type ShareResult = { status: 'success' | 'cancel' | 'fail'; errorCode?: string; errorMessage?: string };
 // Names are the ones https://static.line-scdn.net/liff/edge/2/sdk.js actually installs (verified against
@@ -49,6 +49,9 @@ function loadLiffSdk() {
 
 export default function LiffSharePage() {
   const card = useMemo<FlexCard | null>(() => decodeShareLink(window.location.href), []);
+  // The link names its OA so the page can route the visitor to the same account the card
+  // came from — the server must not guess when several OAs are enabled.
+  const oaParam = useMemo(() => shareLinkOa(window.location.href), []);
   // A link that asked for a card and got a broken one is an error. A link with no card at all is
   // where a shared Flex button lands, so it has to behave like a landing page instead.
   const cardWasRequested = useMemo(() => {
@@ -56,6 +59,7 @@ export default function LiffSharePage() {
     return params.has('c') || params.has('liff.state');
   }, []);
   const [oaUrl, setOaUrl] = useState<string | null | undefined>(undefined);
+  const [oaName, setOaName] = useState<string | null>(null);
   const [liffId, setLiffId] = useState<string | null | undefined>(undefined);
   const [phase, setPhase] = useState<'loading' | 'idle' | 'ready' | 'outside'>('loading');
   const [status, setStatus] = useState('กำลังเชื่อมต่อ LINE…');
@@ -65,13 +69,15 @@ export default function LiffSharePage() {
 
   useEffect(() => {
     let alive = true;
-    void fetch('/api/config').then((response) => response.json()).then((config: { liffId?: string | null; oaUrl?: string | null }) => {
+    const query = oaParam ? `?oa=${encodeURIComponent(oaParam)}` : '';
+    void fetch(`/api/config${query}`).then((response) => response.json()).then((config: { liffId?: string | null; oaUrl?: string | null; displayName?: string | null }) => {
       if (!alive) return;
       setLiffId(config.liffId || null);
       setOaUrl(config.oaUrl || null);
-    }).catch(() => { if (alive) { setLiffId(null); setOaUrl(null); } });
+      setOaName(config.displayName || null);
+    }).catch(() => { if (alive) { setLiffId(null); setOaUrl(null); setOaName(null); } });
     return () => { alive = false; };
-  }, []);
+  }, [oaParam]);
 
   useEffect(() => {
     if (!card || !liffId) return;
@@ -122,7 +128,7 @@ export default function LiffSharePage() {
       return <div className="auth-screen"><div className="auth-card"><h1>ยังไม่ตั้งค่า LINE OA บนเซิร์ฟเวอร์</h1><p className="auth-copy">เปิดใช้งานบัญชี OA ในหน้าบัญชี LINE OA หรือใส่ LINE_OA_FRIEND_URL ใน .env.staging แล้วเริ่ม container API ใหม่</p></div></div>;
     }
     return <div className="share-screen">
-      <header className="share-head"><p className="eyebrow green">LINE OA</p><h1>เพิ่มเพื่อนเพื่อรับกิจกรรม</h1><p>การ์ดที่เพื่อนส่งให้พาเข้ามาถึงหน้าแชร์โดยไม่มีการ์ดแนบมา · กดด้านล่างเพื่อเป็นผู้ติดตาม LINE OA แล้วรอรับโปรโมชั่นในแชท</p></header>
+      <header className="share-head"><p className="eyebrow green">LINE OA</p><h1>เพิ่มเพื่อนเพื่อรับกิจกรรม</h1><p>{oaName ? `บัญชี ${oaName} · ` : ''}การ์ดที่เพื่อนส่งให้พาเข้ามาถึงหน้าแชร์โดยไม่มีการ์ดแนบมา · กดด้านล่างเพื่อเป็นผู้ติดตาม LINE OA แล้วรอรับโปรโมชั่นในแชท</p></header>
       <section className="share-actions">
         <a className="primary full" href={oaUrl} rel="noopener">เพิ่มเพื่อนที่ LINE OA</a>
         <p className="form-note">ถ้าลิงก์นี้ควรมีการ์ดมาด้วย ให้กลับไปกด “แชร์จากมือถือ (LIFF)” ใน Flex Studio แล้วส่งใหม่ทั้งลิงก์</p>
@@ -178,7 +184,7 @@ export default function LiffSharePage() {
       {needsPermission && <button className="secondary full" disabled={busy} onClick={() => void askPermission()}>ขออนุญาตส่งข้อความในแชท</button>}
       {result && <p className="share-result">{result}</p>}
       <p className="form-note">การ์ดที่ส่งจะออกมาในชื่อของคุณ ไม่ใช่จาก OA · เพื่อนที่กดปุ่มในการการ์ดจะกลายเป็นผู้ติดตาม OA</p>
-      <p className="share-mini">ลิงก์นี้: <code>{buildShareLink(liffId, card).slice(0, 48)}…</code></p>
+      <p className="share-mini">ลิงก์นี้: <code>{buildShareLink(liffId, card, oaParam).slice(0, 48)}…</code></p>
     </section>
   </div>;
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { CompleteLineLoginInput, LineLoginContext, LineLoginSession, LineLoginStore, StoredLineLoginFlow } from './lineLoginStore.js';
+import { OA_TIER_SQL } from './oaScope.js';
 
 function sha256(value: string) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -16,7 +17,7 @@ export class PostgresLineLoginStore implements LineLoginStore {
        from staff_invite_links il
        join admin_users u on u.id=il.admin_user_id and u.workspace_id=il.workspace_id and u.active=true
        join workspace_memberships m on m.admin_user_id=u.id and m.workspace_id=u.workspace_id and m.status='ACTIVE'
-       join oa_integrations oa on oa.id=il.oa_integration_id and oa.workspace_id=il.workspace_id and oa.enabled=true and oa.environment='STAGING'
+       join oa_integrations oa on oa.id=il.oa_integration_id and oa.workspace_id=il.workspace_id and oa.enabled=true and ${OA_TIER_SQL}
        where il.token_hash=$1 and il.status='ACTIVE' and (il.expires_at is null or il.expires_at>now())
        limit 2`,
       [sha256(referralToken)]
@@ -42,7 +43,7 @@ export class PostgresLineLoginStore implements LineLoginStore {
          join workspace_memberships m on m.admin_user_id=u.id and m.workspace_id=u.workspace_id and m.status='ACTIVE'
          where il.id=$4 and il.workspace_id=$2 and il.oa_integration_id=$3
            and il.status='ACTIVE' and (il.expires_at is null or il.expires_at>now())
-           and oa.enabled=true and oa.environment='STAGING'
+           and oa.enabled=true and ${OA_TIER_SQL}
        )`,
       [flow.stateHash, flow.workspaceId, flow.oaId, flow.referralId, flow.browserBindingHash, flow.referralTokenSealed, flow.nonceHash, flow.nonceSealed, flow.codeVerifierSealed, flow.expiresAt]
     ).then(result => {
@@ -82,7 +83,7 @@ export class PostgresLineLoginStore implements LineLoginStore {
          join staff_invite_links il on il.id=s.invite_link_id and il.workspace_id=s.workspace_id and il.oa_integration_id=s.oa_integration_id
          join admin_users u on u.id=il.admin_user_id and u.workspace_id=il.workspace_id and u.active=true
          join workspace_memberships m on m.admin_user_id=u.id and m.workspace_id=u.workspace_id and m.status='ACTIVE'
-         join oa_integrations oa on oa.id=s.oa_integration_id and oa.workspace_id=s.workspace_id and oa.enabled=true and oa.environment='STAGING'
+         join oa_integrations oa on oa.id=s.oa_integration_id and oa.workspace_id=s.workspace_id and oa.enabled=true and ${OA_TIER_SQL}
          where s.state_hash=$1 and s.browser_binding_hash=$2 and s.expires_at>now() and s.claimed_at is null
            and il.status='ACTIVE' and (il.expires_at is null or il.expires_at>now())
          for update of s,il,oa`,

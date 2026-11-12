@@ -8,6 +8,7 @@ import { buildManualFlexPushBody, buildManualTextPushBody, MANUAL_PUSH_TEXT_MAX_
 import { HttpTransport, createMessagingAdapter, ProviderTransportError, type MessagingAdapter } from './lineAdapter.js';
 import { OaPolicyError, isLiveSendEnabled } from './oaPolicy.js';
 import { resolveOaAccessToken, vaultKey, checkLineProfile } from './lineOaConnect.js';
+import { OA_TIER_SQL } from './oaScope.js';
 
 type Caller = FastifyRequest & { user?: AdminUser };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -74,7 +75,7 @@ export function registerPushMessageRoutes(
     const result = await pool!.query<OaState>(
       'select oa.id, oa.display_name, oa.provider_id, oa.enabled, oa.kill_switch, coalesce(wc.system_kill_switch,false) as system_kill_switch ' +
       'from oa_integrations oa left join workspace_controls wc on wc.workspace_id=oa.workspace_id ' +
-      "where oa.id=$1 and oa.workspace_id=$2 and oa.environment='STAGING'",
+      'where oa.id=$1 and oa.workspace_id=$2 and ' + OA_TIER_SQL,
       [oaId, workspaceId]
     );
     return result.rows[0] || null;

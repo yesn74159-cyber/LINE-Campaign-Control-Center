@@ -17,7 +17,8 @@ test('phase 1 project bootstrap has runnable scripts and staging defaults', () =
 
 test('admin PWA shell and responsive entrypoint exist', () => {
   assert.match(read('apps/admin/index.html'), /manifest\.webmanifest/);
-  assert.match(read('apps/admin/src/main.tsx'), /Flex Studio/);
+  assert.match(read('apps/admin/src/main.tsx'), /import Shell from '\.\/app\/Shell\.js'/);
+  assert.match(read('apps/admin/src/app/Shell.tsx'), /Flex Studio/);
   assert.match(read('apps/admin/src/styles.css'), /max-width: 680px/);
 });
 

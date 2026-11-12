@@ -437,7 +437,9 @@ test('delivery pipeline source keeps vault-only credentials, atomic quota and op
   assert.doesNotMatch(worker, /new MockLineMessagingAdapter\(\).*adapter\.send/s);
 
   const repository = readFileSync(new URL('../apps/api/src/repository.ts', import.meta.url), 'utf8');
-  assert.match(repository, /from oa_integrations where id=\$1 and workspace_id=\$2 and environment='STAGING' and enabled for update/);
+  // The tier literal now comes from oaScope so one edit moves every statement; the lock must still
+  // demand a staging, enabled OA row.
+  assert.match(repository, /from oa_integrations where id=\$1 and workspace_id=\$2 and ' \+ oaTierSql\(\) \+ ' and enabled for update/);
   assert.match(repository, /insert into oa_rate_limit_windows/);
   assert.match(repository, /monthly_used=monthly_used\+1/);
   assert.match(repository, /greatest\(monthly_used-1,0\)/);
@@ -453,9 +455,9 @@ test('delivery pipeline source keeps vault-only credentials, atomic quota and op
   assert.match(ledger, /UNKNOWN/);
   assert.match(ledger, /reconcile/);
   assert.match(ledger, /x-csrf-token/);
-  const main = readFileSync(new URL('../apps/admin/src/main.tsx', import.meta.url), 'utf8');
-  assert.match(main, /import DeliveryLedger from '\.\/DeliveryLedger\.js'/);
-  assert.match(main, /<DeliveryLedger key=\{`\$\{ledgerJob\.id\}:\$\{ledgerJob\.status\}:\$\{ledgerJob\.attempts\}`\} jobId=\{ledgerJob\.id\}/);
+  const page = readFileSync(new URL('../apps/admin/src/app/PushView.tsx', import.meta.url), 'utf8');
+  assert.match(page, /import DeliveryLedger from '\.\.\/DeliveryLedger\.js'/);
+  assert.match(page, /<DeliveryLedger key=\{`\$\{ledgerJob\.id\}:\$\{ledgerJob\.status\}:\$\{ledgerJob\.attempts\}`\} jobId=\{ledgerJob\.id\}/);
 
   const envExample = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
   assert.match(envExample, /LINE_LIVE_ENABLED=false/);

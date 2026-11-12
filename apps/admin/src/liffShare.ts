@@ -63,12 +63,23 @@ export function decodeShareLink(url: string): FlexCard | null {
   return null;
 }
 
+/** The OA a share link belongs to survives copy-paste only if the link itself names it. */
+export function shareLinkOa(url: string) {
+  const parsed = new URL(url);
+  const direct = parsed.searchParams.get('oa');
+  if (direct) return direct;
+  const state = parsed.searchParams.get('liff.state');
+  if (!state) return null;
+  return new URLSearchParams(state.replace(/^\?/, '')).get('oa');
+}
+
 /**
  * A LIFF API only answers when the page is loaded through https://liff.line.me/<liffId>,
  * so the link handed to the operator is the LIFF URL, not the endpoint URL.
  */
-export function buildShareLink(liffId: string, card: FlexCard) {
-  return `https://liff.line.me/${encodeURIComponent(liffId)}?c=${encodeShareCard(card)}`;
+export function buildShareLink(liffId: string, card: FlexCard, oaBasicId?: string | null) {
+  const base = `https://liff.line.me/${encodeURIComponent(liffId)}?c=${encodeShareCard(card)}`;
+  return oaBasicId ? `${base}&oa=${encodeURIComponent(oaBasicId)}` : base;
 }
 
 export function textShareLink(card: FlexCard) {

@@ -1,64 +1,19 @@
-import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { StrictMode, useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import WorkspaceSettings from './WorkspaceSettings.js';
-import ReferralDashboard from './ReferralDashboard.js';
-import StaffPortal from './StaffPortal.js';
 import AccountSetup from './AccountSetup.js';
-import DeliveryLedger from './DeliveryLedger.js';
-import PushMessage from './PushMessage.js';
-import FlexPreview from './FlexPreview.js';
-import FlexSharePanel from './FlexSharePanel.js';
 import LiffSharePage from './LiffSharePage.js';
-import { type FlexCard } from './liffShare.js';
-import campaignsManifest from '../../../campaigns.json';
-import welcomeFlex from '../../../flex/welcome.json';
-import activityFlex from '../../../flex/activity.json';
-import newsFlex from '../../../flex/news.json';
-import flashFlex from '../../../flex/flash.json';
-import gradientFlex from '../../../flex/gradient.json';
-import purpleFlex from '../../../flex/purple.json';
-import profileFlex from '../../../flex/profile.json';
-
-type Section = 'dashboard' | 'push' | 'campaigns' | 'flex' | 'oas' | 'workspace' | 'referrals' | 'customers' | 'scheduler' | 'audit';
-type Job = { id: string; campaignId: string; oaId: string; scheduledAt: string; timeZone: string; mode: string; status: string; attempts: number; idempotencyKey: string; lastError?: string };
-type ScheduleInput = { campaignId: string; oaId: string; scheduledAt: string; timeZone: string; status: 'DRAFT' | 'SCHEDULED'; mode?: 'DRY_RUN' | 'LIVE'; confirm?: string };
-type Dashboard = { mode: string; persistence?: string; appMode?: string; liveSendEnabled?: boolean; counts: Record<string, number>; nextJob: Job | null };
-type Oa = { id: string; displayName: string; basicId: string; providerId: string; environment: string; enabled: boolean; secretConfigured: boolean; connectionStatus: string; credentialStatus: string; quotaPerMinute: number; monthlyQuota?: number; monthlyUsed?: number; killSwitch: boolean; killSwitchReason?: string };
-type Readiness = { campaignId: string; approvalStatus: string; systemKillSwitch: boolean; oaKillSwitch: boolean; campaignKillSwitch: boolean; quota: { limitPerMinute: number; usedInWindow: number; remaining: number }; audience: { eligible: number; optedOut: number; blocked: number }; canSchedule: boolean; blockers: string[] };
-type Customer = { id: string; providerId: string; lineUserKey: string; displayName?: string; optIn: boolean; blockedAt?: string; optOutAt?: string; optOutSource?: string };
-type Campaign = typeof campaignsManifest.campaigns[number] & { latestRevision?: number; flexJson?: Record<string, unknown>; killSwitch?: boolean };
-type User = { id: string; email: string; displayName: string; role: string };
-
-const apiOrigin = (import.meta.env.VITE_API_ORIGIN || '').replace(/\/$/, '');
-const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
-// The schedule field shows a wall clock in Asia/Bangkok no matter where the operator's
-// laptop is, and the value goes back to the API with an explicit +07:00 offset so the
-// server never has to guess which zone the reading belongs to.
-const bangkokDateTimeValue = (date: Date) => new Date(date.getTime() + BANGKOK_OFFSET_MS).toISOString().slice(0, 16);
-const parseBangkokInput = (value: string) => new Date(`${value.length === 16 ? `${value}:00` : value}+07:00`);
-const formatBangkok = (value: string) => { const parsed = parseBangkokInput(value); return Number.isNaN(parsed.valueOf()) ? 'วันเวลาไม่ถูกต้อง' : parsed.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }); };
-
-const flexById: Record<string, object> = { welcome: welcomeFlex, activity: activityFlex, news: newsFlex, flash: flashFlex, gradient: gradientFlex, purple: purpleFlex, profile: profileFlex };
-const imageById: Record<string, string> = {
-  welcome: new URL('../../../assets/coupon.png', import.meta.url).href,
-  activity: new URL('../../../assets/activity.png', import.meta.url).href,
-  news: new URL('../../../assets/news.png', import.meta.url).href,
-  flash: new URL('../../../assets/coupon.png', import.meta.url).href,
-  gradient: new URL('../../../assets/activity.png', import.meta.url).href,
-  purple: new URL('../../../assets/news.png', import.meta.url).href,
-  profile: new URL('../../../assets/news.png', import.meta.url).href
-};
-
-const api = async <T,>(url: string, options?: RequestInit): Promise<T> => {
-  const headers = new Headers(options?.headers);
-  const method = (options?.method || 'GET').toUpperCase();
-  const csrf = document.cookie.split('; ').find((item) => item.startsWith('ccc_csrf='))?.slice('ccc_csrf='.length);
-  if (csrf && method !== 'GET' && method !== 'HEAD') headers.set('x-csrf-token', decodeURIComponent(csrf));
-  const response = await fetch(`${apiOrigin}${url}`, { ...options, headers, credentials: 'include' });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || `Request failed (${response.status})`);
-  return response.json() as Promise<T>;
-};
+import PublicLinks from './PublicLinks.js';
+import StaffPortal from './StaffPortal.js';
+import { api } from './app/api.js';
+import CampaignsView from './app/CampaignsView.js';
+import CustomersPage from './app/CustomersView.js';
+import DashboardView from './app/DashboardView.js';
+import { campaignSeed, flexById } from './app/data.js';
+import PushView from './app/PushView.js';
+import SettingsPage from './app/SettingsView.js';
+import Shell from './app/Shell.js';
+import { type Campaign, type Customer, type Dashboard, type Job, type JobAction, type Oa, type PushSeed, type Readiness, type ScheduleInput, type Section, type User } from './app/types.js';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -67,42 +22,56 @@ function App() {
   const [dashboard, setDashboard] = useState<Dashboard>({ mode: 'DRY_RUN', counts: {}, nextJob: null });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [oas, setOas] = useState<Oa[]>([]);
+  const [oasLoaded, setOasLoaded] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(campaignsManifest.campaigns);
+  const [campaigns, setCampaigns] = useState<Campaign[]>(campaignSeed);
   const [selected, setSelected] = useState('welcome');
   const [editor, setEditor] = useState(JSON.stringify(flexById.welcome, null, 2));
   const [notice, setNotice] = useState('กำลังโหลดข้อมูล...');
   const [readiness, setReadiness] = useState<Readiness | null>(null);
-  const [pushSeed, setPushSeed] = useState<{ flex: Record<string, unknown> } | null>(null);
+  const [pushSeed, setPushSeed] = useState<PushSeed | null>(null);
   const [liffId, setLiffId] = useState<string | null>(null);
+  const [selectedOaId, setSelectedOaId] = useState<string>(() => localStorage.getItem('lineccc.oa') || '');
   const scheduleKey = useRef(crypto.randomUUID());
   const announced = useRef(false);
   const campaign = campaigns.find((item) => item.id === selected) || campaigns[0]!;
+  // One filter for the whole app: the operator picks the OA once and every screen uses it.
+  const usableOas = oas.filter((item) => item.enabled && item.environment === 'STAGING');
+  const selectedOa = usableOas.find((item) => item.id === selectedOaId) || usableOas[0] || null;
+  const chooseOa = (id: string) => { setSelectedOaId(id); localStorage.setItem('lineccc.oa', id); };
 
   const refresh = async () => {
     try {
       const [d, j, o, c, customerResult] = await Promise.all([api<Dashboard>('/api/dashboard'), api<{ jobs: Job[] }>('/api/scheduler/jobs'), api<{ oas: Oa[] }>('/api/oas'), api<{ campaigns: Campaign[] }>('/api/campaigns'), api<{ customers: Customer[] }>('/api/customers')]);
-      setDashboard(d); setJobs(j.jobs); setOas(o.oas); setCampaigns(c.campaigns); setCustomers(customerResult.customers);
+      setDashboard(d); setJobs(j.jobs); setOas(o.oas); setCampaigns(c.campaigns); setCustomers(customerResult.customers); setOasLoaded(true);
       // Only the first load claims the banner; later refreshes must not erase the
       // message that explains what the operator just did.
       if (!announced.current) { announced.current = true; setNotice(`เชื่อมต่อ ${user?.email || 'ระบบ'} แล้ว • ${d.liveSendEnabled ? 'ส่งจริงได้ (ต้องยืนยันทุกครั้ง)' : 'โหมดทดสอบ · ยังไม่ส่งออก LINE'}`); }
     } catch (error) { if (String(error).includes('401') || String(error).includes('authentication')) setUser(null); else setNotice(error instanceof Error ? error.message : 'API unavailable'); }
   };
-  useEffect(() => { void api<{ user: User }>('/api/auth/me').then((result) => { setUser(result.user); }).catch(() => setUser(null)).finally(() => setBooting(false)); void api<{ liffId: string | null }>('/api/config').then((result) => setLiffId(result.liffId)).catch(() => setLiffId(null)); if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js'); }, []);
+  useEffect(() => { void api<{ user: User }>('/api/auth/me').then((result) => { setUser(result.user); }).catch(() => setUser(null)).finally(() => setBooting(false)); if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js'); }, []);
   useEffect(() => { if (user) void refresh(); }, [user]);
+  // The LIFF id is per OA, so it is fetched for the selected one; without a selection the
+  // endpoint still answers with the server-wide fallback instead of leaving the operator stuck.
+  // Both effects wait for the OA list: a request sent before it resolves cannot name an OA,
+  // and a readiness answer for "whichever OA came first" is exactly the guess this round removes.
+  useEffect(() => {
+    if (!oasLoaded) return;
+    const query = selectedOa ? `?oa=${encodeURIComponent(selectedOa.basicId)}` : '';
+    void api<{ liffId: string | null }>(`/api/config${query}`).then((result) => setLiffId(result.liffId)).catch(() => setLiffId(null));
+  }, [selectedOa?.basicId, oasLoaded]);
   useEffect(() => { if (campaign) setEditor(JSON.stringify(campaign.flexJson || flexById[selected], null, 2)); }, [selected, campaign?.latestRevision]);
-  useEffect(() => { const oa = oas.find((item) => item.enabled && item.environment === 'STAGING'); if (user && oa) void api<Readiness>(`/api/campaigns/${selected}/readiness?oaId=${encodeURIComponent(oa.id)}`).then(setReadiness).catch(() => setReadiness(null)); }, [user, selected, oas]);
+  useEffect(() => { if (!user || !oasLoaded) return; const query = selectedOa ? `?oaId=${encodeURIComponent(selectedOa.id)}` : ''; void api<Readiness>(`/api/campaigns/${selected}/readiness${query}`).then(setReadiness).catch(() => setReadiness(null)); }, [user, selected, selectedOa?.id, oasLoaded]);
 
   const createSchedule = async (input: ScheduleInput) => {
     try { await api('/api/scheduler/jobs', { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': scheduleKey.current }, body: JSON.stringify(input) }); scheduleKey.current = crypto.randomUUID(); setNotice(input.status === 'DRAFT' ? 'บันทึกแบบร่างแล้ว' : input.mode === 'LIVE' ? 'ตั้งเวลาส่งจริงแล้ว · LINE จะได้รับข้อความเมื่อถึงเวลา' : 'สร้างงานทดสอบแล้ว · จะไม่มีการส่งออก LINE'); await refresh(); setSection('scheduler'); }
     catch (error) { setNotice(error instanceof Error ? error.message : 'สร้างงานไม่สำเร็จ'); throw error; }
   };
   const submitJob = async (campaignId = selected) => {
-    const oa = oas.find((item) => item.enabled);
-    if (!oa) { setNotice('ยังไม่มี OA ที่เปิดใช้งานใน Staging'); return; }
-    await createSchedule({ campaignId, oaId: oa.id, scheduledAt: new Date(Date.now() + 60 * 60_000).toISOString(), timeZone: 'Asia/Bangkok', status: 'SCHEDULED' }).catch(() => undefined);
+    if (!selectedOa) { setNotice('ยังไม่ได้เลือก LINE OA · เลือกบัญชีที่ header หรือเปิดใช้งานในหน้าตั้งค่าก่อน'); return; }
+    await createSchedule({ campaignId, oaId: selectedOa.id, scheduledAt: new Date(Date.now() + 60 * 60_000).toISOString(), timeZone: 'Asia/Bangkok', status: 'SCHEDULED' }).catch(() => undefined);
   };
-  const jobAction = async (id: string, action: 'schedule' | 'pause' | 'resume' | 'cancel' | 'retry' | 'dry-run') => { try { await api(`/api/scheduler/jobs/${id}/${action}`, { method: 'POST' }); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'ทำรายการไม่สำเร็จ'); } };
+  const jobAction = async (id: string, action: JobAction) => { try { await api(`/api/scheduler/jobs/${id}/${action}`, { method: 'POST' }); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'ทำรายการไม่สำเร็จ'); } };
   const saveRevision = async () => { try { const flexJson = JSON.parse(editor) as Record<string, unknown>; await api(`/api/campaigns/${selected}/revisions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flexJson }) }); setNotice('บันทึกเวอร์ชันใหม่ของการ์ดแล้ว'); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'บันทึก revision ไม่สำเร็จ'); } };
   /** LINE has no share button for Flex cards, so the card is handed to the manual push screen instead. */
   const shareFlexToChat = () => { try { setPushSeed({ flex: JSON.parse(editor) as Record<string, unknown> }); setNotice('การ์ดถูกส่งไปที่หน้า “ส่งข้อความตรง” แล้ว · เลือกผู้รับ (ใส่ LINE ID ตัวเองได้) แล้วกดดูตัวอย่าง'); setSection('push'); } catch { setNotice('JSON ใน Flex Studio ยังไม่ถูกต้อง · แก้ก่อนแชร์'); } };
@@ -124,19 +93,15 @@ function App() {
   const canApprove = ['owner', 'admin', 'reviewer'].includes(user.role);
   const canManage = ['owner', 'admin'].includes(user.role);
 
-  return <div className="shell">
-    <aside className="sidebar"><div className="logo"><span>●</span><div><strong>LINE Campaign</strong><small>Control Center</small></div></div><div className={`mode-pill${dashboard.liveSendEnabled ? ' live' : ''}`}>● {dashboard.liveSendEnabled ? 'ส่งจริงได้ · LIVE' : 'โหมดทดสอบ · DRY RUN'}</div><nav>{navGroups.map((group) => <div className="nav-group" key={group.title}><p>{group.title}</p>{group.items.map(([id, label, icon]) => <button className={section === id ? 'active' : ''} onClick={() => setSection(id)} key={id}><span>{icon}</span>{label}</button>)}</div>)}</nav><div className="sidebar-foot">{dashboard.liveSendEnabled ? 'เซิร์ฟเวอร์เปิดประตูส่งจริง · ต้องพิมพ์คำยืนยันทุกครั้ง' : 'โหมดทดสอบ · ข้อความยังไม่ถึงลูกค้าจริง'}</div></aside>
-    <main className="content"><header className="topbar"><div><p className="eyebrow">ศูนย์ควบคุมแคมเปญ LINE</p><h1>{section === 'dashboard' ? `สวัสดีครับ, ${user.displayName}` : (section === 'flex' ? 'Flex Studio' : sectionLabel(section))}</h1></div><div className="top-actions"><button className="icon-btn" onClick={() => void refresh()} aria-label="Refresh">↻</button><span className="role-label">{user.role}</span><div className="avatar">AD</div><button className="text-btn" onClick={() => void logout()}>ออกจากระบบ</button></div></header><div className="notice-bar"><span className="pulse" />{notice}<strong className={dashboard.liveSendEnabled ? 'live' : undefined}>{dashboard.liveSendEnabled ? 'โหมด LIVE · ต้องพิมพ์ LIVE หรือ SEND เพื่อยืนยัน' : 'ไม่มีการส่งออก LINE'}</strong></div>{section === 'dashboard' && <DashboardView dashboard={dashboard} jobs={jobs} customers={customers} campaigns={campaigns} oas={oas} onNavigate={setSection} onAction={jobAction} />} {section === 'push' && <PushMessage oas={oas} customers={customers} liveSendEnabled={Boolean(dashboard.liveSendEnabled)} seed={pushSeed} onSeedUsed={() => setPushSeed(null)} />} {section === 'campaigns' && <CampaignsView campaigns={campaigns} canWrite={canWrite} canManage={canManage} onKillSwitch={setCampaignKillSwitch} onFlex={(id) => { setSelected(id); setSection('flex'); }} onSchedule={(id) => { setSelected(id); void submitJob(id); }} />} {section === 'flex' && <FlexView campaigns={campaigns} campaign={campaign} selected={selected} setSelected={setSelected} editor={editor} setEditor={setEditor} onSave={saveRevision} onSchedule={() => submitJob()} readiness={readiness} onValidate={validateCampaign} onApprove={approveCampaign} canWrite={canWrite} canApprove={canApprove} canManage={canManage} onKillSwitch={setCampaignKillSwitch} onShareToChat={shareFlexToChat} liffId={liffId} />} {section === 'oas' && <OasView oas={oas} systemKillSwitch={Boolean(readiness?.systemKillSwitch)} canManage={canManage} onCreate={createOa} onValidate={validateOa} onEnabled={setOaEnabled} onKillSwitch={setOaKillSwitch} onLimits={setOaLimits} onSystemKillSwitch={setSystemKillSwitch} />} {section === 'workspace' && <WorkspaceSettings session={user} />} {section === 'referrals' && <ReferralDashboard canManage={['owner','admin'].includes(user.role)} />} {section === 'customers' && <CustomersView customers={customers} canWrite={canWrite} onOptOut={optOutCustomer} />} {section === 'scheduler' && <SchedulerView jobs={jobs} campaigns={campaigns} oas={oas} canWrite={canWrite} liveSendEnabled={Boolean(dashboard.liveSendEnabled)} onCreate={createSchedule} onAction={jobAction} />} {section === 'audit' && <AuditView />}</main>
-  </div>;
+  return <Shell user={user} section={section} onNavigate={setSection} dashboard={dashboard} notice={notice} selectedOa={selectedOa} usableOas={usableOas} onChooseOa={chooseOa} onRefresh={() => void refresh()} onLogout={() => void logout()}>
+    {section === 'dashboard' && <DashboardView dashboard={dashboard} jobs={jobs} customers={customers} campaigns={campaigns} oas={oas} onNavigate={setSection} onAction={jobAction} />}
+    {(section === 'push' || section === 'scheduler') && <PushView section={section} onNavigate={setSection} oas={oas} oaId={selectedOa?.id || ''} customers={customers} liveSendEnabled={Boolean(dashboard.liveSendEnabled)} pushSeed={pushSeed} onSeedUsed={() => setPushSeed(null)} jobs={jobs} campaigns={campaigns} canWrite={canWrite} onCreate={createSchedule} onAction={jobAction} />}
+    {section === 'flex' && <CampaignsView campaigns={campaigns} campaign={campaign} selected={selected} setSelected={setSelected} editor={editor} setEditor={setEditor} onSave={saveRevision} onSchedule={() => submitJob()} readiness={readiness} onValidate={validateCampaign} onApprove={approveCampaign} canWrite={canWrite} canApprove={canApprove} canManage={canManage} onKillSwitch={setCampaignKillSwitch} onShareToChat={shareFlexToChat} liffId={liffId} oaBasicId={selectedOa?.basicId ?? null} />}
+    {(section === 'customers' || section === 'referrals') && <CustomersPage section={section} onNavigate={setSection} customers={customers} canWrite={canWrite} canManage={canManage} oaId={selectedOa?.id || ''} onOptOut={optOutCustomer} />}
+    {section === 'links' && <PublicLinks oaId={selectedOa?.id || null} oaName={selectedOa?.displayName} onNavigate={setSection} />}
+    {(section === 'oas' || section === 'workspace' || section === 'audit') && <SettingsPage section={section} onNavigate={setSection} oas={oas} user={user} systemKillSwitch={Boolean(readiness?.systemKillSwitch)} canManage={canManage} onCreate={createOa} onValidate={validateOa} onEnabled={setOaEnabled} onKillSwitch={setOaKillSwitch} onLimits={setOaLimits} onSystemKillSwitch={setSystemKillSwitch} />}
+  </Shell>;
 }
-
-const navGroups: { title: string; items: [Section, string, string][] }[] = [
-  { title: 'ทำงานประจำวัน', items: [['dashboard', 'ภาพรวม', '⌂'], ['push', 'ส่งข้อความตรง', '✉'], ['scheduler', 'ตั้งเวลาส่ง (Scheduler)', '◷'], ['customers', 'ลูกค้า', '♧']] },
-  { title: 'ออกแบบข้อความ', items: [['campaigns', 'เทมเพลตทั้งหมด', '◈'], ['flex', 'สร้างข้อความ (Flex Studio)', '✦']] },
-  { title: 'ตั้งค่าระบบ', items: [['oas', 'บัญชี LINE OA', '◎'], ['referrals', 'ลิงก์แนะนำ (Referral)', '↗'], ['workspace', 'ทีมงาน & การเชื่อมต่อ (Workspace)', '⚙'], ['audit', 'บันทึกการใช้งาน (Audit)', '≡']] },
-];
-
-const sectionLabel = (section: Section) => ({ dashboard: 'ภาพรวม', push: 'ส่งข้อความตรงถึงลูกค้า', campaigns: 'เทมเพลตทั้งหมด', flex: 'Flex Studio', workspace: 'ทีมงาน & การเชื่อมต่อ (Workspace)', referrals: 'ลิงก์แนะนำลูกค้า (Referral Dashboard)', oas: 'บัญชี LINE OA', customers: 'ฐานข้อมูลลูกค้า', scheduler: 'ตั้งเวลาส่ง (Scheduler)', audit: 'บันทึกการใช้งาน (Audit Log)' }[section]);
 
 function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
   const [email, setEmail] = useState('');
@@ -150,124 +115,6 @@ function LoginView({ onLogin }: { onLogin: (user: User) => void }) {
   const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { const result = await api<{ user: User }>('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }); onLogin(result.user); } catch (reason) { setError(reason instanceof Error ? reason.message : 'เข้าสู่ระบบไม่สำเร็จ'); } finally { setBusy(false); } };
   return <div className="auth-screen"><div className="auth-card"><div className="logo"><span>●</span><div><strong>LINE Campaign</strong><small>Control Center</small></div></div><p className="eyebrow green">ศูนย์ควบคุมแคมเปญ</p><h1>เข้าสู่ระบบ</h1><p className="auth-copy">หน้านี้ปิดไว้จนกว่าจะยืนยันตัวตน Admin สำเร็จ</p><form onSubmit={submit}><label htmlFor="admin-email">Email</label><input id="admin-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /><label htmlFor="admin-password">Password</label><input id="admin-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" minLength={12} required />{error && <p className="auth-error">{error}</p>}<button className="primary full" disabled={busy}>{busy ? 'กำลังตรวจสอบ...' : 'เข้าสู่ระบบ Staging'}</button></form><small className={gate === 'live' ? 'auth-foot live' : 'auth-foot'}>{gate === 'live' ? 'โหมด LIVE · ข้อความที่ยืนยันแล้วจะส่งถึงลูกค้าจริง' : gate === 'dry' ? 'โหมดทดสอบ · ยังไม่มีข้อความออกจากเครื่องนี้' : 'กำลังตรวจสอบโหมดของเซิร์ฟเวอร์…'} · ไม่เก็บ password ใน Frontend</small></div></div>;
 }
-
-type JobAction = 'schedule' | 'pause' | 'resume' | 'cancel' | 'retry' | 'dry-run';
-function DashboardView({ dashboard, jobs, customers, campaigns, oas, onNavigate, onAction }: { dashboard: Dashboard; jobs: Job[]; customers: Customer[]; campaigns: Campaign[]; oas: Oa[]; onNavigate: (s: Section) => void; onAction: (id: string, action: JobAction) => void }) {
-  const todayLabel = new Intl.DateTimeFormat('th-TH', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date()); return <><div className="hero-row"><div><p className="eyebrow green">{todayLabel}</p><h2>จัดการแคมเปญ LINE<br /><em>ได้ในที่เดียว</em></h2><p className="subcopy">วางแผน สร้าง และตรวจสอบแคมเปญ LINE OA จากที่เดียว</p><button className="primary" onClick={() => onNavigate('campaigns')}>＋ สร้างแคมเปญใหม่</button></div><div className={`hero-orb${dashboard.liveSendEnabled ? ' live' : ''}`}><span>{dashboard.liveSendEnabled ? 'ส่งจริง' : 'ทดสอบ'}<br />{dashboard.liveSendEnabled ? 'พร้อม' : 'ไม่ส่ง'}</span><small>{dashboard.liveSendEnabled ? 'ประตูส่งจริงเปิด' : 'ยังไม่ส่งออก LINE'}</small></div></div><div className="metric-grid"><Metric label="แคมเปญทั้งหมด" value={String(campaigns.length)} trend="เทมเพลตพร้อมใช้" icon="◈" /><Metric label="งานรอส่ง" value={String((dashboard.counts.SCHEDULED || 0) + (dashboard.counts.RETRYABLE || 0))} trend="อยู่ในคิว" icon="◷" /><Metric label="ลูกค้าในระบบ" value={String(customers.length)} trend={customers.length ? 'ติดตาม OA อยู่' : 'ยังไม่มีลูกค้า'} icon="♧" /><Metric label="LINE OA" value={String(oas.length)} trend={`เปิดใช้ ${oas.filter((oa) => oa.enabled).length} บัญชี`} icon="◎" /></div><div className="two-col"><section className="panel"><div className="panel-head"><div><p className="eyebrow">งานถัดไป</p><h3>งานที่กำลังจะทำ</h3></div><button className="text-btn" onClick={() => onNavigate('scheduler')}>ดูทั้งหมด →</button></div>{jobs.slice(0, 3).map((job) => <JobRow key={job.id} job={job} oas={oas} campaigns={campaigns} onAction={onAction} />)}{!jobs.length && <Empty text="ยังไม่มีงานที่ตั้งเวลาไว้" />}</section><section className="panel quick-panel"><p className="eyebrow">ทางลัด</p><h3>เริ่มงานได้ทันที</h3><button onClick={() => onNavigate('flex')} className="quick-item"><span className="quick-icon purple">✦</span><span><strong>เปิด Flex Studio</strong><small>แก้ไขข้อความและดูตัวอย่าง</small></span><b>→</b></button><button onClick={() => onNavigate('scheduler')} className="quick-item"><span className="quick-icon orange">◷</span><span><strong>ตั้งเวลาส่ง (ทดสอบ)</strong><small>ทดลองทั้งขั้นตอน แต่ไม่ส่ง LINE</small></span><b>→</b></button><button onClick={() => onNavigate('push')} className="quick-item"><span className="quick-icon green-bg">✉</span><span><strong>ส่งข้อความตรง</strong><small>พิมพ์ ตรวจตัวอย่าง แล้วค่อยส่ง</small></span><b>→</b></button><button onClick={() => onNavigate('oas')} className="quick-item"><span className="quick-icon green-bg">◎</span><span><strong>ตรวจ LINE OA</strong><small>ดูสถานะการเชื่อมต่อ</small></span><b>→</b></button></section></div><section className="panel activity-panel"><div className="panel-head"><div><p className="eyebrow">สถานะระบบ</p><h3>ทุกอย่างพร้อมใช้งาน</h3></div><span className={`tag ${dashboard.persistence === 'postgres' ? 'success' : 'dry'}`}>{dashboard.persistence === 'postgres' ? '● ระบบพร้อม' : '● โหมดสำรอง'}</span></div><div className="system-row"><div><span className="system-dot green-dot" /><strong>ระบบหลังบ้าน</strong><small>เชื่อมต่อฐานข้อมูลแล้ว</small></div><div><span className={`system-dot ${dashboard.liveSendEnabled ? 'green-dot' : 'amber-dot'}`} /><strong>การส่ง LINE</strong><small>{dashboard.liveSendEnabled ? 'ส่งจริงได้ · ต้องยืนยันทุกครั้ง' : 'ปิดอยู่ · ส่งได้เฉพาะโหมดทดสอบ'}</small></div></div></section></>;
-}
-
-function Metric({ label, value, trend, icon }: { label: string; value: string; trend: string; icon: string }) { return <div className="metric"><span className="metric-icon">{icon}</span><p>{label}</p><strong>{value}</strong><small>{trend}</small></div>; }
-const jobStatusLabel = (status: string) => ({ DRAFT: 'ร่าง', SCHEDULED: 'รอส่ง', PAUSED: 'หยุดชั่วคราว', COMPLETED: 'ส่งแล้ว', FAILED: 'ล้มเหลว', FAILED_FINAL: 'ล้มเหลว', CANCELLED: 'ยกเลิก', RETRYABLE: 'รอส่งใหม่' } as Record<string, string>)[status] || status;
-const approvalLabel = (status?: string) => ({ APPROVED: 'อนุมัติแล้ว', VALIDATED: 'ตรวจแล้ว · รออนุมัติ', DRAFT: 'ยังไม่ได้ตรวจ' } as Record<string, string>)[status || ''] || 'กำลังตรวจสถานะ';
-const maskLineKey = (key: string) => (key.length > 12 ? `${key.slice(0, 5)}…${key.slice(-4)}` : key);
-const maskLineKeysInText = (text: string) => text.replace(/\bU[0-9a-f]{32}\b/gi, (key) => maskLineKey(key));
-const auditDetailText = (detail: string) => maskLineKeysInText(detail
-  .replace(/^Preview and validation completed$/, 'ตรวจข้อความและดูตัวอย่างเสร็จแล้ว')
-  .replace(/^Campaign approved for revision (\d+)$/, 'อนุมัติแคมเปญเวอร์ชัน $1')
-  .replace(/^Campaign approved for Staging DRY_RUN scheduling$/, 'อนุมัติแคมเปญสำหรับตั้งเวลาทดสอบ')
-  .replace(/^revision (\d+)$/, 'เวอร์ชัน $1')
-  .replace(/^Referral status changed to ACTIVE$/, 'เปลี่ยนสถานะลิงก์เป็น ใช้งาน')
-  .replace(/^Referral status changed to PAUSED$/, 'เปลี่ยนสถานะลิงก์เป็น หยุดชั่วคราว')
-  .replace(/^Referral status changed to REVOKED$/, 'เปลี่ยนสถานะลิงก์เป็น ยกเลิก')
-  .replace(/^Referral link created for member (.+)$/, 'สร้างลิงก์ให้ $1')
-  .replace(/\bDRY_RUN\b/g, 'ทดสอบ')
-  .replace(/\bLIVE\b/g, 'ส่งจริง'));
-const connectionLabel = (status: string) => ({ DRY_RUN_READY: 'พร้อมทดสอบ', VERIFIED: 'เชื่อมต่อแล้ว', NOT_CONFIGURED: 'ยังไม่ตั้งค่า' } as Record<string, string>)[status] || status;
-const blockerLabel = (blocker: string) => ({ 'Campaign approval is required': 'ยังไม่ได้อนุมัติข้อความ', 'Campaign content changed since approval': 'ข้อความเปลี่ยนหลังอนุมัติ · ต้องตรวจและอนุมัติใหม่', 'System kill switch is active': 'ระบบถูกหยุดฉุกเฉินอยู่', 'OA kill switch is active': 'LINE OA ถูกหยุดฉุกเฉินอยู่', 'Campaign kill switch is active': 'แคมเปญนี้ถูกหยุดอยู่', 'A staging OA must be selected': 'ยังไม่ได้เลือก LINE OA', 'Selected OA is not an enabled staging OA': 'LINE OA ที่เลือกยังไม่เปิดใช้งาน' } as Record<string, string>)[blocker] || blocker;
-function JobRow({ job, oas, campaigns, onAction }: { job: Job; oas: Oa[]; campaigns: Campaign[]; onAction: (id: string, action: JobAction) => void }) {
-  const campaignName = campaigns.find((item) => item.id === job.campaignId)?.name || job.campaignId;
-  const oaName = oas.find((item) => item.id === job.oaId)?.displayName || 'LINE OA';
-  return <div className="job-row"><div className="job-date"><strong>{new Date(job.scheduledAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</strong><small>{new Date(job.scheduledAt).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })}</small></div><div className="job-main"><strong>{campaignName}</strong><small>{oaName} · {job.mode === 'LIVE' ? 'ส่งจริง (LIVE)' : 'ทดสอบ (DRY RUN)'}</small>{job.mode === 'LIVE' && <p className="live-warn">งานนี้จะยิง LINE จริงเมื่อถึงเวลา</p>}</div><span className={`tag ${job.mode === 'LIVE' ? 'live' : 'dry'} job-mode`}>{job.mode === 'LIVE' ? 'ส่งจริง' : 'ทดสอบ'}</span><span className={`tag ${job.status === 'PAUSED' ? 'paused' : job.status === 'COMPLETED' ? 'success' : job.status === 'FAILED' || job.status === 'FAILED_FINAL' ? 'status-error' : 'dry'}`}>{jobStatusLabel(job.status)}</span><div className="row-actions">{['DRAFT','SCHEDULED','RETRYABLE'].includes(job.status) && <button onClick={() => onAction(job.id, 'pause')}>หยุดชั่วคราว</button>}{job.status === 'PAUSED' && <button onClick={() => onAction(job.id, 'resume')}>ทำต่อ</button>}{['DRAFT','SCHEDULED','PAUSED','RETRYABLE'].includes(job.status) && <button onClick={() => onAction(job.id, 'cancel')}>ยกเลิก</button>}{['FAILED','FAILED_FINAL'].includes(job.status) && <button onClick={() => onAction(job.id, 'retry')}>ลองใหม่</button>}{['DRAFT','SCHEDULED','RETRYABLE'].includes(job.status) && <button onClick={() => onAction(job.id, 'dry-run')}>ทดลองส่ง</button>}</div></div>;
-}
-function CampaignsView({ campaigns, canWrite, canManage, onFlex, onSchedule, onKillSwitch }: { campaigns: Campaign[]; canWrite: boolean; canManage: boolean; onFlex: (id: string) => void; onSchedule: (id: string) => void; onKillSwitch: (id: string, enabled: boolean) => Promise<void> }) { return <section className="stack"><div className="section-intro"><div><p className="eyebrow green">คลังข้อความ</p><h2>แคมเปญและเทมเพลต</h2><p>เลือกเทมเพลตเพื่อแก้ไขหรือตั้งเวลาส่ง</p></div><span className="tag dry">{campaigns.length} เทมเพลต</span></div><div className="campaign-grid">{campaigns.map((item) => <article className="campaign-tile" key={item.id}><img src={imageById[item.id]} alt="" /><div className="campaign-tile-body"><span className="eyebrow">เวอร์ชัน {item.latestRevision || 1}</span><h3>{item.title}</h3><p>{item.description}</p>{item.killSwitch && <span className="tag status-error">หยุดอยู่</span>}<div><button className="text-btn" onClick={() => onFlex(item.id)}>Flex Studio →</button><button className="mini-btn" disabled={!canWrite || item.killSwitch} onClick={() => onSchedule(item.id)}>＋ ตั้งเวลา</button><button className={item.killSwitch ? 'text-btn' : 'danger-btn'} disabled={!canManage} onClick={() => void onKillSwitch(item.id, !item.killSwitch)}>{item.killSwitch ? 'เปิดแคมเปญกลับ' : 'หยุดแคมเปญ'}</button></div></div></article>)}</div></section>; }
-function FlexView({ campaigns, campaign, selected, setSelected, editor, setEditor, onSave, onSchedule, onShareToChat, readiness, onValidate, onApprove, canWrite, canApprove, canManage, onKillSwitch, liffId }: { campaigns: Campaign[]; campaign: Campaign; selected: string; setSelected: (id: string) => void; editor: string; setEditor: (value: string) => void; onSave: () => void; onSchedule: () => void; onShareToChat: () => void; readiness: Readiness | null; onValidate: () => void; onApprove: () => void; canWrite: boolean; canApprove: boolean; canManage: boolean; onKillSwitch: (id: string, enabled: boolean) => Promise<void>; liffId: string | null }) { const [valid, setValid] = useState(true); const [showShare, setShowShare] = useState(false); const card = useMemo(() => { try { return JSON.parse(editor) as Record<string, unknown>; } catch { return null; } }, [editor]); return <section className="stack"><div className="section-intro"><div><p className="eyebrow purple-text">เทมเพลต · {campaign.name}</p><h2>สร้างข้อความที่คนอยากเปิด</h2><p>เลือกเทมเพลต แก้ข้อความ ดูตัวอย่าง แล้วส่งเข้า LINE</p></div><div className="studio-actions"><button className="secondary" onClick={() => { setEditor(JSON.stringify(campaign.flexJson || flexById[selected], null, 2)); setValid(true); }}>รีเซ็ต</button><button className="secondary" disabled={!canWrite} onClick={onSave}>บันทึกเวอร์ชัน</button><button className="secondary" disabled={!canWrite} onClick={onValidate}>ตรวจข้อความ</button><button className="secondary" disabled={!canApprove || readiness?.approvalStatus !== 'VALIDATED'} onClick={onApprove}>อนุมัติ</button><button className="secondary" onClick={onShareToChat}>แชร์เข้าแชท</button><button className="secondary" disabled={!card} onClick={() => setShowShare((value) => !value)}>แชร์จากมือถือ (LIFF)</button><button className="primary" disabled={!canWrite || !readiness?.canSchedule} onClick={onSchedule}>ตั้งเวลาส่ง (ทดสอบ)</button><button className={campaign.killSwitch ? 'secondary' : 'danger-btn'} disabled={!canManage} onClick={() => void onKillSwitch(campaign.id, !campaign.killSwitch)}>{campaign.killSwitch ? 'เปิดแคมเปญกลับ' : 'หยุดแคมเปญนี้'}</button></div></div><div className="approval-strip"><span className={`tag ${readiness?.approvalStatus === 'APPROVED' ? 'success' : 'dry'}`}>{approvalLabel(readiness?.approvalStatus)}</span>{campaign.killSwitch && <span className="tag status-error">แคมเปญถูกหยุดอยู่</span>}<span>ผู้รับพร้อมรับ {readiness?.audience.eligible ?? '—'} คน</span>{readiness?.blockers.length ? <strong>{readiness.blockers.map(blockerLabel).join(' · ')}</strong> : <strong>พร้อมตั้งเวลาส่ง</strong>}</div>{showShare && card && (liffId ? <FlexSharePanel card={card as FlexCard} liffId={liffId} /> : <p className="auth-error">ยังแชร์จากมือถือไม่ได้ · ให้ผู้ดูแลระบบเปิดใช้งาน LIFF ก่อน</p>)}<div className="studio-layout"><section className="panel editor-panel"><label>เทมเพลต</label><select value={selected} onChange={(event) => setSelected(event.target.value)}>{campaigns.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><label>โค้ดการ์ด (JSON)</label><textarea value={editor} onChange={(event) => { setEditor(event.target.value); setValid(false); }} spellCheck={false} /><div className="editor-footer"><span className={card ? 'valid' : 'invalid'}>● {card && valid ? 'โค้ดถูกต้อง พร้อมบันทึก' : 'ตรวจโค้ดก่อนใช้'}</span><button className="secondary" onClick={() => { try { JSON.parse(editor); setValid(true); } catch { setValid(false); } }}>ตรวจโค้ด</button></div></section><section className="preview-panel"><div className="phone"><div className="phone-top"><span>9:41</span><span>● ◔ ▪</span></div><div className="line-card"><div className="line-header"><span className="line-logo">●</span><strong>LINE OA Preview</strong></div><FlexPreview card={card} fallback="ยังแก้ข้อความไม่เสร็จ · การ์ดจริงจะแสดงตรงนี้" /></div><small className="preview-note">ตัวอย่างบนหน้าจอมือถือ · ยังไม่ส่งออก</small></div></section></div></section>; }
-function OasView({ oas, systemKillSwitch, canManage, onCreate, onValidate, onEnabled, onKillSwitch, onLimits, onSystemKillSwitch }: { oas: Oa[]; systemKillSwitch: boolean; canManage: boolean; onCreate: (input: { providerId: string; basicId: string; displayName: string }) => Promise<void>; onValidate: (id: string) => Promise<void>; onEnabled: (id: string, enabled: boolean) => Promise<void>; onKillSwitch: (id: string, enabled: boolean) => Promise<void>; onLimits: (id: string, limits: { quotaPerMinute?: number; monthlyQuota?: number }) => Promise<void>; onSystemKillSwitch: (enabled: boolean) => Promise<void> }) {
-  const [displayName, setDisplayName] = useState('');
-  const [basicId, setBasicId] = useState('');
-  const [providerId, setProviderId] = useState('');
-  const [systemStopped, setSystemStopped] = useState(systemKillSwitch);
-  const [limitsDraft, setLimitsDraft] = useState<Record<string, { perMinute: string; perMonth: string }>>({});
-  useEffect(() => setSystemStopped(systemKillSwitch), [systemKillSwitch]);
-  const draftFor = (oa: Oa) => limitsDraft[oa.id] ?? { perMinute: String(oa.quotaPerMinute), perMonth: String(oa.monthlyQuota ?? 0) };
-  const saveLimits = async (oa: Oa) => { const draft = draftFor(oa); await onLimits(oa.id, { quotaPerMinute: Number(draft.perMinute), monthlyQuota: Number(draft.perMonth) }); setLimitsDraft((current) => { const next = { ...current }; delete next[oa.id]; return next; }); };
-  const submit = async (event: FormEvent) => { event.preventDefault(); await onCreate({ displayName, basicId, providerId }); setDisplayName(''); setBasicId(''); setProviderId(''); };
-  return <section className="stack"><div className="section-intro"><div><p className="eyebrow green">บัญชี LINE OA</p><h2>LINE OA ของคุณ</h2><p>เชื่อมต่อ LINE OA ได้หลายบัญชี · รหัสลับเก็บไว้ฝั่งเซิร์ฟเวอร์เท่านั้น</p></div><button className={systemStopped ? 'secondary' : 'primary'} onClick={() => { const next = !systemStopped; setSystemStopped(next); void onSystemKillSwitch(next); }}>{systemStopped ? 'เปิดระบบกลับ' : 'หยุดระบบฉุกเฉิน'}</button></div><section className="panel oa-management"><div className="panel-head"><div><p className="eyebrow">ข้อมูลบัญชี LINE OA</p><h3>เพิ่มบัญชีสำหรับ Staging</h3></div><span className="tag dry">NO SECRET INPUT</span></div><form className="oa-form" onSubmit={submit}><label>ชื่อที่แสดงในระบบ<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="เช่น OA Campaign Staging" required /></label><label>Basic ID<input value={basicId} onChange={(event) => setBasicId(event.target.value)} placeholder="@staging-basic-id" required /></label><label>Provider ID<input value={providerId} onChange={(event) => setProviderId(event.target.value)} placeholder="staging-provider-a" required /></label><button className="primary" type="submit">＋ เพิ่มบัญชี OA</button></form><p className="form-note">Credential จะถูกอ้างอิงจาก Server secret store ในขั้นตอนที่ได้รับอนุมัติเท่านั้น และจะไม่ถูกส่งกลับ Frontend</p></section><div className="oa-grid">{oas.map((oa) => <article className="panel oa-card" key={oa.id}><div className="oa-avatar">◎</div><div><h3>{oa.displayName}</h3><p>{oa.basicId}</p><span className={`tag ${oa.enabled ? 'success' : 'paused'}`}>{oa.enabled ? 'เปิดใช้งาน' : 'ปิดอยู่'}</span><span className="tag dry">{connectionLabel(oa.connectionStatus)}</span><p className="oa-summary">ส่งได้ {oa.quotaPerMinute} ข้อความ/นาที{oa.monthlyQuota ? ` · ใช้ไป ${oa.monthlyUsed ?? 0}/${oa.monthlyQuota} ข้อความเดือนนี้` : ''}{oa.killSwitch ? ' · หยุดฉุกเฉินอยู่' : ''}</p></div><div className="oa-actions"><button className="secondary" onClick={() => void onEnabled(oa.id, !oa.enabled)}>{oa.enabled ? 'ปิดใช้งาน OA' : 'เปิดใช้งาน OA'}</button><button className={oa.killSwitch ? 'secondary' : 'danger-btn'} onClick={() => void onKillSwitch(oa.id, !oa.killSwitch)}>{oa.killSwitch ? 'ปิดการหยุดฉุกเฉิน' : 'หยุด OA ฉุกเฉิน'}</button></div><details className="advanced"><summary>รายละเอียดสำหรับผู้ดูแลระบบ</summary><dl><dt>Provider ID</dt><dd>{oa.providerId}</dd><dt>สภาพแวดล้อม</dt><dd>{oa.environment}</dd><dt>Credential</dt><dd>{oa.secretConfigured ? 'ตั้งค่าแล้ว · ซ่อนค่า' : 'ยังไม่ตั้งค่า'}</dd></dl><button className="secondary" onClick={() => void onValidate(oa.id)}>ตรวจการเชื่อมต่อ (ไม่ส่ง LINE)</button><form className="oa-limits" onSubmit={(event) => { event.preventDefault(); void saveLimits(oa); }}><label>ต่อนาที<input type="number" min="1" max="500" value={draftFor(oa).perMinute} disabled={!canManage} onChange={(event) => setLimitsDraft((current) => ({ ...current, [oa.id]: { ...draftFor(oa), perMinute: event.target.value } }))} /></label><label>ต่อเดือน (0 = ไม่จำกัด)<input type="number" min="0" value={draftFor(oa).perMonth} disabled={!canManage} onChange={(event) => setLimitsDraft((current) => ({ ...current, [oa.id]: { ...draftFor(oa), perMonth: event.target.value } }))} /></label><button className="secondary" type="submit" disabled={!canManage}>บันทึกเพดาน</button></form></details></article>)}</div></section>; }
-function CustomersView({ customers, canWrite, onOptOut }: { customers: Customer[]; canWrite: boolean; onOptOut: (id: string) => Promise<void> }) {
-  const [query, setQuery] = useState('');
-  const [busyId, setBusyId] = useState('');
-  const needle = query.trim().toLowerCase();
-  const filtered = customers.filter((customer) => !needle || [customer.displayName, customer.lineUserKey, customer.providerId].filter(Boolean).join(' ').toLowerCase().includes(needle));
-  const exportCsv = () => {
-    const escape = (value: string) => `"${value.replaceAll('"', '""')}"`;
-    const header = ['id', 'providerId', 'lineUserKey', 'displayName', 'optIn', 'blockedAt', 'optOutAt', 'optOutSource'];
-    const rows = filtered.map((customer) => [customer.id, customer.providerId, customer.lineUserKey, customer.displayName || '', String(customer.optIn), customer.blockedAt || '', customer.optOutAt || '', customer.optOutSource || '']);
-    // The BOM keeps Thai names readable when the file is opened in Excel.
-    const blob = new Blob([`\uFEFF${[header, ...rows].map((row) => row.map(escape).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`; link.click();
-    URL.revokeObjectURL(url);
-  };
-  const optOut = async (id: string) => { setBusyId(id); try { await onOptOut(id); } finally { setBusyId(''); } };
-  return <section className="stack"><div className="section-intro"><div><p className="eyebrow green">ฐานข้อมูลลูกค้า</p><h2>ลูกค้าในระบบ</h2><p>รายชื่อลูกค้าที่ติดตาม LINE OA · เมื่อยกเลิกความยินยอม ระบบจะหยุดส่งทันทีจนกว่าลูกค้าจะติดตาม OA ใหม่</p></div><span className="tag dry">{customers.length} คน</span></div>{customers.length ? <section className="panel table-panel"><div className="table-head"><label htmlFor="customer-search">ค้นหา<input id="customer-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ชื่อ หรือ LINE ID" /></label><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><span>{filtered.length} / {customers.length}</span><button className="secondary" onClick={exportCsv} disabled={!filtered.length}>⬇ ดาวน์โหลด CSV</button></div></div>{filtered.map((customer) => <div className="audit-row" key={customer.id}><span className="audit-dot" /><div><strong>{customer.displayName || 'ลูกค้า LINE'}</strong><small>LINE ID {maskLineKey(customer.lineUserKey)}{customer.optOutAt ? ` · ยกเลิกความยินยอม ${new Date(customer.optOutAt).toLocaleString('th-TH')}${customer.optOutSource === 'line_unfollow' ? ' (เลิกติดตาม OA)' : customer.optOutSource === 'operator' ? ' (เจ้าหน้าที่บันทึก)' : ''}` : ''}</small></div><span className={`tag ${customer.blockedAt ? 'paused' : customer.optIn ? 'success' : 'dry'}`}>{customer.blockedAt ? 'บล็อกอยู่' : customer.optIn ? 'ยินยอมรับข้อความ' : 'ยังไม่ยินยอม'}</span><button className="mini-btn" disabled={!canWrite || busyId === customer.id || (!customer.optIn && Boolean(customer.blockedAt))} onClick={() => void optOut(customer.id)}>{busyId === customer.id ? 'กำลังบันทึก...' : 'ยกเลิกความยินยอม'}</button></div>)}{!filtered.length && <div className="empty-inline">ไม่พบลูกค้าที่ตรงกับคำค้น</div>}</section> : <div className="empty-state"><span>♧</span><h3>ยังไม่มีลูกค้าในระบบ</h3><p>ลูกค้าจะปรากฏที่นี่เมื่อกดติดตาม LINE OA</p></div>}</section>;
-}
-function SchedulerView({ jobs, campaigns, oas, canWrite, liveSendEnabled, onCreate, onAction }: { jobs: Job[]; campaigns: Campaign[]; oas: Oa[]; canWrite: boolean; liveSendEnabled: boolean; onCreate: (input: ScheduleInput) => Promise<void>; onAction: (id: string, action: JobAction) => void }) {
-  const enabledOas = oas.filter((oa) => oa.enabled && oa.environment === 'STAGING');
-  const [campaignId, setCampaignId] = useState(campaigns[0]?.id || '');
-  const [oaId, setOaId] = useState(enabledOas[0]?.id || '');
-  const [scheduledAt, setScheduledAt] = useState(() => bangkokDateTimeValue(new Date(Date.now() + 60 * 60_000)));
-  const [formError, setFormError] = useState('');
-  const [ledgerJobId, setLedgerJobId] = useState('');
-  const [live, setLive] = useState(false);
-  const [liveConfirm, setLiveConfirm] = useState('');
-  const selectedCampaign = campaigns.find((item) => item.id === campaignId) || campaigns[0];
-  const selectedOa = enabledOas.find((item) => item.id === oaId) || enabledOas[0];
-  const ledgerJob = jobs.find((job) => job.id === ledgerJobId) || jobs[0];
-  const submit = async (status: 'DRAFT' | 'SCHEDULED') => {
-    setFormError('');
-    if (!campaignId || !selectedCampaign) return setFormError('กรุณาเลือกเทมเพลต');
-    if (!selectedOa) return setFormError('ยังไม่มี OA Staging ที่เปิดใช้งาน');
-    const parsed = parseBangkokInput(scheduledAt);
-    if (Number.isNaN(parsed.valueOf()) || (status === 'SCHEDULED' && parsed.getTime() <= Date.now())) return setFormError('กรุณาเลือกวันเวลาในอนาคต');
-    const mode: 'DRY_RUN' | 'LIVE' = status === 'SCHEDULED' && live ? 'LIVE' : 'DRY_RUN';
-    try { await onCreate({ campaignId, oaId: selectedOa.id, scheduledAt: parsed.toISOString(), timeZone: 'Asia/Bangkok', status, mode, confirm: mode === 'LIVE' ? liveConfirm : undefined }); }
-    catch (error) { setFormError(error instanceof Error ? error.message : 'บันทึกไม่สำเร็จ'); }
-  };
-  const summary = jobs.reduce<Record<string, number>>((result, job) => { result[job.status] = (result[job.status] || 0) + 1; return result; }, {});
-  return <section className="stack"><div className="section-intro"><div><p className="eyebrow orange-text">CAMPAIGN AUTOMATION STUDIO</p><h2>ตั้งเวลาส่งแคมเปญ</h2><p>เลือก OA และเทมเพลต ตั้งเวลา แล้วเลือกว่าจะทดสอบหรือส่งจริง</p></div><span className={`mode-pill${liveSendEnabled ? ' live' : ''}`}>{liveSendEnabled ? '● ส่งจริงใช้ได้' : '● โหมดทดสอบ'}</span></div><div className="automation-summary">{([['DRAFT','ร่าง'],['SCHEDULED','รอส่ง'],['PAUSED','หยุด'],['COMPLETED','ส่งแล้ว'],['FAILED','ล้มเหลว'],['CANCELLED','ยกเลิก']] as const).map(([status, label]) => <span key={status}><strong>{summary[status] || 0}</strong>{label}</span>)}</div><div className="automation-grid"><section className="panel scheduler-form"><div className="panel-head"><div><p className="eyebrow">ตั้งเวลา</p><h3>สร้างงานใหม่</h3></div><span className={live ? 'tag live' : 'tag dry'}>{live ? 'ส่งจริง' : 'ทดสอบ · ไม่ส่ง LINE'}</span></div><label htmlFor="schedule-oa">LINE OA (Staging)</label><select id="schedule-oa" value={selectedOa?.id || ''} onChange={(event) => setOaId(event.target.value)}><option value="">เลือก OA</option>{enabledOas.map((oa) => <option value={oa.id} key={oa.id}>{oa.displayName} · {oa.basicId}</option>)}</select><label htmlFor="schedule-campaign">เทมเพลตข้อความ</label><select id="schedule-campaign" value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>{campaigns.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><div className="form-grid"><div><label htmlFor="schedule-at">วันและเวลา</label><input id="schedule-at" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} /></div><div><label htmlFor="schedule-zone">เขตเวลา</label><input id="schedule-zone" value="Asia/Bangkok" readOnly /></div></div>{formError && <p className="auth-error">{formError}</p>}<div className="mode-choice"><label className={live ? 'choice' : 'choice selected'}><input type="radio" name="job-mode" checked={!live} onChange={() => setLive(false)} /><span>ทดสอบ (DRY RUN)</span><small>บันทึกงานและเดิน flow จริง แต่ไม่ยิง LINE</small></label><label className={live ? 'choice selected' : 'choice'}><input type="radio" name="job-mode" disabled={!liveSendEnabled || !canWrite} checked={live} onChange={() => setLive(true)} /><span>ส่งจริง (LIVE)</span><small>{liveSendEnabled ? 'เมื่อถึงเวลา ข้อความจะถึงลูกค้าที่ opt-in ทุกคน' : 'ยังส่งจริงไม่ได้ · ผู้ดูแลระบบต้องเปิดสิทธิ์ก่อน'}</small></label></div>{live && <div className="live-confirm"><p className="live-warn"><strong>ส่งจริงผ่าน LINE</strong> · กรุณาตรวจผู้รับและเวลาก่อน แล้วพิมพ์ LIVE เพื่อปลดล็อกปุ่ม</p><input aria-label="พิมพ์ LIVE เพื่อยืนยันการส่งจริง" value={liveConfirm} onChange={(event) => setLiveConfirm(event.target.value.toUpperCase())} placeholder="พิมพ์ LIVE" maxLength={20} /></div>}<div className="form-actions"><button className="secondary" disabled={!canWrite} onClick={() => void submit('DRAFT')}>บันทึกเป็นแบบร่าง</button><button className={live ? 'danger-btn' : 'primary'} disabled={!canWrite || (live && liveConfirm !== 'LIVE')} onClick={() => void submit('SCHEDULED')}>{live ? 'ตั้งเวลาส่งจริง (LIVE)' : 'ตั้งเวลาส่ง (ทดสอบ)'}</button></div></section><section className="panel preview-card"><div className="panel-head"><div><p className="eyebrow purple-text">ตรวจก่อนบันทึก</p><h3>Campaign Preview</h3></div><span className="tag success">ตัวอย่าง</span></div>{selectedCampaign ? <><img src={imageById[selectedCampaign.id]} alt="" /><span className="eyebrow">{selectedOa?.displayName || 'ยังไม่เลือก OA'}</span><h3>{selectedCampaign.title}</h3><p>{selectedCampaign.description}</p><strong>{selectedCampaign.cta}</strong><small>ส่งแบบ {formatBangkok(scheduledAt)} · {live ? 'ยิง LINE จริงเมื่อถึงเวลา' : 'ไม่มี LINE request'}</small></> : <Empty text="เลือก Template เพื่อดู Preview" />}</section></div><section className="panel table-panel"><div className="table-head"><strong>ประวัติการตั้งเวลา</strong><span>{jobs.length} รายการ</span></div>{jobs.map((job) => <JobRow key={job.id} job={job} oas={oas} campaigns={campaigns} onAction={onAction} />)}{!jobs.length && <Empty text="ยังไม่มีงาน" />}</section>{jobs.length > 0 ? <details className="advanced"><summary>รายละเอียดการส่งต่อผู้รับ · สำหรับผู้ดูแลระบบ</summary><section className="panel"><div className="panel-head"><div><p className="eyebrow">ตารางส่งต่อผู้รับ</p><h3>เลือกงานเพื่อดูสถานะผู้รับ</h3></div></div><label htmlFor="ledger-job">งาน</label><select id="ledger-job" value={ledgerJob?.id || ''} onChange={(event) => setLedgerJobId(event.target.value)}>{jobs.map((job) => <option value={job.id} key={job.id}>{campaigns.find((item) => item.id === job.campaignId)?.name || job.campaignId} · {jobStatusLabel(job.status)} · {new Date(job.scheduledAt).toLocaleString('th-TH')}</option>)}</select></section>{ledgerJob && <DeliveryLedger key={`${ledgerJob.id}:${ledgerJob.status}:${ledgerJob.attempts}`} jobId={ledgerJob.id} canWrite={canWrite} />}</details> : <section className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">สถานะส่งต่อผู้รับ</p><h3>รายละเอียดการส่งต่อ</h3></div></div><div className="empty-inline">ยังไม่มีงานในตาราง · ตั้งเวลาหรือทดลองส่งก่อน</div></section>}</section>;
-}
-const auditActionLabel = (action: string) => ({
-  ACCOUNT_INVITE_ISSUED: 'ออกลิงก์เชิญสมาชิก', ACCOUNT_RESET_ISSUED: 'ออกลิงก์รีเซ็ตรหัสผ่าน',
-  CAMPAIGN_APPROVED: 'อนุมัติแคมเปญ', CAMPAIGN_VALIDATED: 'ตรวจข้อความแคมเปญ',
-  CAMPAIGN_KILL_SWITCH_ON: 'หยุดแคมเปญชั่วคราว', CAMPAIGN_KILL_SWITCH_OFF: 'เปิดแคมเปญกลับ',
-  CUSTOMER_OPT_OUT: 'ลูกค้ายกเลิกความยินยอม', DRY_RUN_ENQUEUED: 'ทดลองส่ง (ไม่ยิง LINE)',
-  DRY_RUN_EXECUTED: 'ทดลองส่งสำเร็จ',
-  FLEX_REVISION_CREATED: 'บันทึกเวอร์ชันการ์ด', MANUAL_PUSH_PREVIEWED: 'ดูตัวอย่างข้อความตรง',
-  MANUAL_PUSH_SENT: 'ส่งข้อความตรง', MANUAL_PUSH_BLOCKED: 'ส่งข้อความตรงถูกบล็อก',
-  MANUAL_PUSH_FAILED: 'ส่งข้อความตรงไม่สำเร็จ',
-  MEMBER_INVITE_ACCEPTED: 'สมาชิกตั้งรหัสผ่านสำเร็จ', MEMBER_INVITED: 'เชิญสมาชิก', MEMBER_UPDATED: 'แก้ไขข้อมูลสมาชิก',
-  OA_CONNECTION_CREATED: 'เพิ่มบัญชี LINE OA',
-  OA_CREDENTIAL_REFERENCE_VALIDATED: 'ตรวจ credential ของ OA', OA_LIMITS_CHANGED: 'แก้เพดานการส่ง',
-  OA_CHANNEL_VERIFIED: 'ยืนยันช่องทาง OA กับ LINE', OA_CHANNEL_METADATA_UPDATED: 'อัปเดตข้อมูลช่องทาง OA',
-  OA_TOKEN_VERIFIED: 'ตรวจ token ของ OA ผ่าน', OA_TOKEN_RECHECKED: 'ตรวจ token ของ OA ซ้ำ',
-  OA_VAULT_REKEYED: 'เปลี่ยนกุญแจเข้ารหัส credential',
-  REFERRAL_CREATED: 'สร้างลิงก์แนะนำ', REFERRAL_ACTIVE: 'เปิดลิงก์แนะนำ',
-  REFERRAL_PAUSED: 'หยุดลิงก์แนะนำชั่วคราว', REFERRAL_RESUMED: 'เปิดลิงก์แนะนำต่อ', REFERRAL_REVOKED: 'ยกเลิกลิงก์แนะนำ',
-  STAGING_SEEDED: 'ติดตั้งข้อมูลตั้งต้น', WORKSPACE_RENAMED: 'เปลี่ยนชื่อ Workspace',
-  WORKER_HEARTBEAT: 'worker ยังทำงานอยู่',
-  OA_ENABLED: 'เปิดใช้งาน OA', OA_DISABLED: 'ปิดใช้งาน OA',
-  OA_KILL_SWITCH_ON: 'หยุด OA ฉุกเฉิน', OA_KILL_SWITCH_OFF: 'ปิดการหยุด OA ฉุกเฉิน',
-  SYSTEM_KILL_SWITCH_ON: 'หยุดระบบฉุกเฉิน', SYSTEM_KILL_SWITCH_OFF: 'เปิดระบบกลับ',
-  OUTBOX_SENDING: 'กำลังส่งถึงผู้รับ', OUTBOX_SENT: 'ส่งถึงผู้รับแล้ว', OUTBOX_RECONCILED: 'กระทบยอดการส่ง',
-  PASSWORD_RESET_COMPLETED: 'ตั้งรหัสผ่านใหม่สำเร็จ', QUOTA_EXCEEDED: 'โควตาการส่งเต็ม', QUOTA_NEAR_LIMIT: 'โควตาใกล้เต็ม',
-  SCHEDULE_CREATED: 'สร้างงานตั้งเวลา', SCHEDULE_DRAFT_CREATED: 'สร้างงานแบบร่าง',
-  SCHEDULE_SCHEDULED: 'ตั้งเวลาส่งแล้ว', SCHEDULE_PAUSED: 'หยุดงานชั่วคราว', SCHEDULE_RESUMED: 'ทำต่องานที่หยุด',
-  SCHEDULE_CANCELLED: 'ยกเลิกงาน', SCHEDULE_RETRY: 'ลองส่งงานใหม่',
-  WORKER_CLAIMED: 'worker รับงาน', WORKER_COMPLETED: 'worker ส่งงานสำเร็จ', WORKER_FAILED: 'worker ส่งงานไม่สำเร็จ', WORKER_RETRY: 'worker ลองใหม่', WORKER_RECOVERED: 'worker กู้งานค้าง',
-  RATE_LIMITED: 'ถูกจำกัดอัตราการเรียก', SKIPPED: 'ข้ามรายการนี้', FAILED: 'ล้มเหลว'
-} as Record<string, string>)[action] || action;
-function AuditView() { const [events, setEvents] = useState<{ id: string; action: string; actor: string; target: string; detail: string; createdAt: string }[]>([]); useEffect(() => { void api<{ events: typeof events }>('/api/audit').then((result) => setEvents(result.events)).catch(() => undefined); }, []); const visible = events.filter((event) => event.action !== 'WORKER_HEARTBEAT'); const hidden = events.length - visible.length; return <section className="stack"><div className="section-intro"><div><p className="eyebrow green">ความโปร่งใส</p><h2>ประวัติการใช้งาน</h2><p>เหตุการณ์สำคัญในระบบ · ไม่มีรหัสผ่านหรือข้อมูลลับ</p></div></div><section className="panel table-panel">{visible.map((event) => <div className="audit-row" key={event.id}><span className="audit-dot" /><div><strong>{auditActionLabel(event.action)}</strong><small>{auditDetailText(event.detail)}</small></div><time>{new Date(event.createdAt).toLocaleString('th-TH')}</time></div>)}{!visible.length && <Empty text="ยังไม่มีบันทึกการใช้งาน" />}{hidden > 0 && <p className="form-note">ซ่อน heartbeat ของ worker {hidden} รายการ</p>}</section></section>; }
-function Empty({ text }: { text: string }) { return <div className="empty-inline">{text}</div>; }
 
 function Root() { const setup = window.location.pathname === '/account-setup'; const share = window.location.pathname === '/share'; const match = window.location.pathname.match(/^\/r\/([^/]+)$/); return setup ? <AccountSetup /> : share ? <LiffSharePage /> : match ? <StaffPortal token={decodeURIComponent(match[1])} /> : <App />; }
 

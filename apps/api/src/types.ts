@@ -70,6 +70,10 @@ export interface CampaignReadiness {
   audience: { eligible: number; optedOut: number; blocked: number };
   canSchedule: boolean;
   blockers: string[];
+  /** Null when readiness could not resolve an OA; the caller must name one before scheduling. */
+  oa?: { id: string; displayName: string; basicId: string } | null;
+  /** The OAs the caller may name as `oaId`; only populated when no OA was resolved. */
+  candidateOas?: { id: string; displayName: string; basicId: string }[];
 }
 
 export interface SchedulerJob {

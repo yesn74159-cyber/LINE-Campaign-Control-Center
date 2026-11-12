@@ -100,6 +100,26 @@ async function main() {
   const auditBody = await audit.json().catch(() => null);
   record('audit log readable', audit.ok && Array.isArray(auditBody?.events), `events=${auditBody?.events?.length ?? 'n/a'}`);
 
+  // The operator hands out /share?oa=<basicId>; that link must name the same OA and must not be
+  // cached at the edge. The fake-token portal check stays manual because it needs a POST.
+  const links = await get('/api/oa-links', { headers: { cookie: cookieHeader } });
+  const linksBody = await links.json().catch(() => null);
+  const linkRows = Array.isArray(linksBody?.links) ? linksBody.links : null;
+  const linksShaped = linkRows !== null && linkRows.every((item) => typeof item.oaId === 'string' && typeof item.basicId === 'string' && (item.shareUrl === null || typeof item.shareUrl === 'string') && typeof item.credentialReady === 'boolean' && typeof item.webhookVerified === 'boolean');
+  record('oa links readable', links.ok && linksShaped, `HTTP ${links.status} links=${linkRows?.length ?? 'n/a'}`);
+  const shareable = linkRows?.find((item) => typeof item.shareUrl === 'string') || null;
+  record('an OA has a shareable link', Boolean(shareable), shareable ? `basicId=${shareable.basicId}` : 'no enabled staging OA');
+
+  if (shareable) {
+    const oaQuery = encodeURIComponent(shareable.basicId).replace(/%40/gi, '@');
+    const config = await get(`/api/config?oa=${oaQuery}`);
+    const configBody = await config.json().catch(() => null);
+    record('share config names the requested OA', config.ok && configBody?.oaId === shareable.oaId && typeof configBody?.oaUrl === 'string', `oaId=${configBody?.oaId ?? 'null'} oaUrl=${configBody?.oaUrl ? 'set' : 'null'}`);
+    record('share config is uncached', headerValues(config, 'cache-control').includes('no-store'));
+    const sharePage = await get(`/share?oa=${oaQuery}`);
+    record('share page serves html', sharePage.status === 200 && headerValues(sharePage, 'content-type').some((value) => value.includes('text/html')), `HTTP ${sharePage.status}`);
+  }
+
   const logout = await fetch(`${base}/api/auth/logout`, {
     method: 'POST',
     headers: { cookie: cookieHeader, 'x-csrf-token': csrfCookie.split('=')[1] }

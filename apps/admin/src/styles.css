@@ -67,6 +67,7 @@ details.advanced > *:not(summary) { margin-top:12px; }
 .member-invite-form select, .tenant-table select { border: 1px solid #d8e6df; border-radius: 8px; background: #fcfefd; color: #22493f; padding: 8px; }
 .referral-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; }
 .referral-form label, .filter-row label { display: grid; gap: 7px; color: #668278; font-size: 11px; font-weight: 750; }
+.referral-form .referral-oa-note { margin: 7px 0 0; color: #22493f; font-size: 12px; font-weight: 600; }
 .referral-form input, .referral-form select, .filter-row select, .copy-row input { width: 100%; min-width: 0; border: 1px solid #d8e6df; border-radius: 8px; background: #fcfefd; color: #22493f; padding: 10px; }
 .created-referral { display: grid; grid-template-columns: 1fr 150px; gap: 20px; align-items: center; position: relative; }
 .copy-row { display: flex; gap: 8px; margin: 12px 0; }
@@ -134,3 +135,21 @@ a.line-login-button { text-decoration: none; }
 .share-steps { margin: 0; padding-left: 20px; color: #4c6c60; font-size: 12px; line-height: 1.7; display: grid; gap: 4px; }
 .share-link-row { display: flex; gap: 8px; align-items: center; }
 .share-link-row input { flex: 1; min-width: 0; border: 1px solid #d4e4dc; border-radius: 8px; padding: 10px; font-size: 11px; font-family: ui-monospace, monospace; color: #33584b; background: #f7fbf9; }
+/* One OA picker in the top bar, six menus, one row of templates */
+.oa-pick-label { margin: 0; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #7d968d; }
+.oa-picker { width: auto; max-width: 260px; padding: 8px 10px; font-size: 12px; font-weight: 700; border-radius: 10px; }
+.oa-picker:disabled { color: #9db2a9; }
+.tab-strip { display: flex; gap: 4px; border-bottom: 1px solid #e1ece7; margin: 0 0 18px; flex-wrap: wrap; }
+.tab-strip button { border: 0; background: transparent; color: #6f8b81; font-size: 13px; font-weight: 700; padding: 10px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab-strip button.active { color: #106b52; border-bottom-color: #17a37b; }
+.tab-strip button:hover { color: #106b52; }
+.template-strip { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 6px; }
+.template-chip { flex: 0 0 168px; display: grid; gap: 4px; text-align: left; background: white; border: 1px solid #e1ece7; border-radius: 12px; padding: 8px; color: #26473d; }
+.template-chip img { width: 100%; height: 74px; object-fit: cover; border-radius: 8px; display: block; }
+.template-chip strong { font-size: 12px; }
+.template-chip small { color: #81968e; font-size: 10px; line-height: 1.4; }
+.template-chip.active { border-color: #17a37b; box-shadow: 0 0 0 3px #17a37b1a; }
+.studio-layout { grid-template-columns: .85fr 1.15fr; }
+.editor-panel details.advanced textarea { min-height: 320px; }
+@media (max-width: 900px) { .studio-layout { grid-template-columns: 1fr; } .oa-picker { max-width: 100%; } }
+@media (max-width: 680px) { .top-actions { gap: 8px; flex-wrap: wrap; } .oa-pick-label { display: none; } .oa-picker { max-width: 165px; font-size: 11px; padding: 7px 8px; } .template-chip { flex-basis: 140px; } }

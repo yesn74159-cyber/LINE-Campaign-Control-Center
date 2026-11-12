@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Pool, QueryResultRow } from 'pg';
 import { oaFriendUrl } from './oaFriendUrl.js';
+import { OA_TIER_SQL, oaTierSql } from './oaScope.js';
 
 export type ReferralStatus = 'ACTIVE' | 'PAUSED' | 'REVOKED';
 export type ReferralView = {
@@ -124,7 +125,7 @@ export async function createReferral(pool: Pool, input: {
     );
     if (staff.rows.length !== 1) throw new ReferralError('staff member is not active in this workspace');
     const oa = await client.query(
-      "select id from oa_integrations where workspace_id=$1 and id=$2 and environment='STAGING' and enabled=true limit 2",
+      'select id from oa_integrations where workspace_id=$1 and id=$2 and ' + oaTierSql() + ' and enabled=true limit 2',
       [input.workspaceId, oaId]
     );
     if (oa.rows.length !== 1) throw new ReferralError('selected OA is not an enabled staging OA in this workspace');
@@ -206,7 +207,7 @@ export async function recordClick(pool: Pool, token: string) {
        from staff_invite_links il
        join admin_users u on u.id=il.admin_user_id and u.workspace_id=il.workspace_id and u.active=true
        join workspace_memberships m on m.admin_user_id=u.id and m.workspace_id=u.workspace_id and m.status='ACTIVE'
-       join oa_integrations oa on oa.id=il.oa_integration_id and oa.workspace_id=il.workspace_id and oa.enabled=true and oa.environment='STAGING'
+       join oa_integrations oa on oa.id=il.oa_integration_id and oa.workspace_id=il.workspace_id and oa.enabled=true and ${OA_TIER_SQL}
        where il.token_hash=$1 and il.status='ACTIVE' and (il.expires_at is null or il.expires_at>now())
        limit 2`,
       [hashReferralToken(token)]
@@ -350,7 +351,7 @@ export async function verifyReferralFollow(pool: Pool, input: {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const oa = await client.query<{ workspace_id: string }>("select workspace_id from oa_integrations where id=$1 and environment='STAGING'", [oaId]);
+    const oa = await client.query<{ workspace_id: string }>('select workspace_id from oa_integrations where id=$1 and ' + oaTierSql(), [oaId]);
     if (!oa.rows[0]) {
       await client.query('rollback');
       return { accepted: true, duplicate: false, matched: false };

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createDatabase } from './db.js';
 import { runMigrations } from './migrate.js';
 import { readDeliveryHealth, opsThresholds } from './opsHealth.js';
+import { oaTierSql } from './oaScope.js';
 import {
   alertWebhookUrl,
   opsAlertFormatFor,
@@ -90,7 +91,7 @@ try {
     // `enabled` or the connection status, and it never sends a message.
     const key = vaultKey();
     const oas = await database.pool.query<{ workspace_id: string; id: string; display_name: string }>(
-      "select workspace_id, id, display_name from oa_integrations where environment='STAGING' and enabled order by created_at"
+      'select workspace_id, id, display_name from oa_integrations where ' + oaTierSql() + ' and enabled order by created_at'
     );
     const results = [];
     for (const oa of oas.rows) {

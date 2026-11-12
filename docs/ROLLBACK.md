@@ -26,7 +26,7 @@ RELEASE_TAG=<tag-ก่อนหน้า> bash deploy/release.sh --no-build
 ```bash
 curl -sS https://66t.online/health                     # ok:true, db:up, mode:DRY_RUN
 SMOKE_BASE_URL=https://66t.online SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... \
-  SMOKE_EXPECT_LINE_LOGIN=1 npm run smoke:staging      # 20/20
+  SMOKE_EXPECT_LINE_LOGIN=1 npm run smoke:staging      # 25/25 (5 checks ตรวจลิงก์แจกของ OA)
 docker ps --filter name=line-ccc --format '{{.Names}}\t{{.Image}}'
 ```
 
@@ -34,7 +34,8 @@ docker ps --filter name=line-ccc --format '{{.Names}}\t{{.Image}}'
 
 ## ข้อจำกัดที่ต้องรู้
 
-- **Migration ไม่ย้อนตาม image** — `016`–`019` เป็นการเพิ่มคอลัมน์/คลาย constraint แบบ forward-only; image เก่าทำงานกับ schema ใหม่ได้ แต่ image ใหม่ที่รันไปแล้วจะไม่ถอย schema ให้ ถ้า release นั้นแก้ schema และต้องการถอยจริง ให้ restore จาก dump (`scripts/db-restore.mjs`) ไม่ใช่แค่เปลี่ยน tag
+- **Migration ไม่ย้อนตาม image** — `016`–`020` เป็นการเพิ่มคอลัมน์/คลาย constraint แบบ forward-only (ล่าสุดคือ `020` ที่เพิ่ม `workspace_oa_channels.liff_id`); image เก่าทำงานกับ schema ใหม่ได้ (คอลัมน์เกินมาไม่ถูกอ่าน) แต่ image ใหม่ที่รันไปแล้วจะไม่ถอย schema ให้ ถ้า release นั้นแก้ schema และต้องการถอยจริง ให้ restore จาก dump (`scripts/db-restore.mjs`) ไม่ใช่แค่เปลี่ยน tag
+- **ตรวจจำนวน OA ก่อน deploy 020** — `select count(*) from oa_integrations where enabled;` ถ้าได้ 2 แถวขึ้นไป readiness/ตัวสร้างลิงก์จะไม่เดา OA และตอบ `A staging OA must be selected` / `OA_REQUIRED` จนกว่าจะเลือก OA ชัดเจน (การลบ/ปิดแถวเป็นสิทธิ์เจ้าของ)
 - **`local` ไม่ใช่ tag สำหรับ rollback** — image ที่ไม่มี tag จะถูกเขียนทับทุกครั้งที่ build; ห้ามใช้ `docker compose build` ตรง ๆ บน staging ให้ใช้ `deploy/release.sh`
 - **worker ใช้ image เดียวกับ api** (`line-ccc-api:<tag>`) — rollback ครั้งเดียวเปลี่ยนทั้งคู่ (`up -d` recreate worker ด้วย)
 - เก็บ image เก่าไว้อย่างน้อย 2 tag; ถ้าดิสก์ตึง ให้ลบเฉพาะ tag ที่ไม่ได้อยู่ใน `.env.staging`:

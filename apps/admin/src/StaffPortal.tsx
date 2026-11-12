@@ -13,8 +13,10 @@ async function request<T>(url: string, method = 'POST', body?: object): Promise<
 }
 
 export default function StaffPortal({ token }: { token: string }) {
-  const [click, setClick] = useState<ClickResult | null>(null); const [member, setMember] = useState<LineMember | null>(null); const [message, setMessage] = useState('กำลังตรวจสอบลิงก์...'); const [loginEnabled, setLoginEnabled] = useState(false); const [busy, setBusy] = useState(false); const [configOaUrl, setConfigOaUrl] = useState<string | null>(null);
-  const friendUrl = click?.oaFriendUrl || configOaUrl;
+  const [click, setClick] = useState<ClickResult | null>(null); const [member, setMember] = useState<LineMember | null>(null); const [message, setMessage] = useState('กำลังตรวจสอบลิงก์...'); const [loginEnabled, setLoginEnabled] = useState(false); const [busy, setBusy] = useState(false);
+  // The click response names the OA this link belongs to, so no global config lookup is needed;
+  // the server default would point a second OA's links at the wrong account.
+  const friendUrl = click?.oaFriendUrl;
   const oaLabel = click?.oaName || click?.oaId || 'กำลังตรวจสอบ';
   useEffect(() => {
     const result = new URLSearchParams(window.location.search).get('lineLogin');
@@ -31,9 +33,6 @@ export default function StaffPortal({ token }: { token: string }) {
     }
     void request<{ enabled: boolean }>('/api/line-login/config', 'GET').then(value => setLoginEnabled(value.enabled)).catch(() => setLoginEnabled(false));
     void request<{ member: LineMember }>('/api/line-login/session', 'GET').then(value => setMember(value.member)).catch(() => setMember(null));
-    // Only a fallback: the click response carries the OA the link itself belongs to, which is the
-    // right answer once several OAs are enabled. This one is the server's default OA.
-    void request<{ oaUrl?: string | null }>('/api/config', 'GET').then(value => setConfigOaUrl(value.oaUrl || null)).catch(() => setConfigOaUrl(null));
   }, [token]);
   function startLineLogin() { window.location.assign(apiUrl(`/api/line-login/start?referralToken=${encodeURIComponent(token)}`)); }
   async function logout() { setBusy(true); try { await request('/api/line-login/logout'); setMember(null); setMessage('ออกจากระบบ LINE แล้ว'); } finally { setBusy(false); } }

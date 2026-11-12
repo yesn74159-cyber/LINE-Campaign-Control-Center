@@ -332,9 +332,10 @@ test('scheduled_at is read as Asia/Bangkok from the API and the admin form', asy
   // The worker's environment map replaces the anchor's rather than merging into it.
   assert.match(serviceBlock(compose, 'worker'), /TZ: \$\{TZ:-Asia\/Bangkok\}/);
 
-  const admin = read('apps/admin/src/main.tsx');
-  assert.match(admin, /BANGKOK_OFFSET_MS = 7 \* 60 \* 60_000/);
-  assert.match(admin, /\+07:00/);
+  const clock = read('apps/admin/src/app/api.ts');
+  assert.match(clock, /BANGKOK_OFFSET_MS = 7 \* 60 \* 60_000/);
+  assert.match(clock, /\+07:00/);
+  const admin = read('apps/admin/src/app/PushView.tsx');
   assert.match(admin, /formatBangkok\(scheduledAt\)/);
   assert.doesNotMatch(admin, /getTimezoneOffset/, 'the operator laptop zone must not decide the schedule');
 

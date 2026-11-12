@@ -89,12 +89,14 @@ async function openApp(t, fixture) {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('http://127.0.0.1:' + fixture.server.address().port, { waitUntil: 'networkidle' });
   if (fixture.signedIn !== false) {
-    for (const group of ['ทำงานประจำวัน', 'ออกแบบข้อความ', 'ตั้งค่าระบบ']) await page.getByText(group).waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: '✉ ส่งข้อความตรง', exact: true }).waitFor({ timeout: 10_000 });
   }
   return { page, errors };
 }
 
 const navTo = (page, icon, label) => page.getByRole('button', { name: `${icon} ${label}`, exact: true }).click();
+/** Scheduler is a tab under the push menu now, so reaching it means one nav click plus one tab click. */
+const openScheduler = async (page) => { await navTo(page, '✉', 'ส่งข้อความตรง'); await page.getByRole('tab', { name: 'ตั้งเวลาส่ง (Scheduler)' }).click(); };
 
 /** The first piece of copy inside a Flex document, used to prove the preview really rendered the card. */
 function firstFlexText(node) {
@@ -154,7 +156,7 @@ test('a Flex card can be composed, previewed and sent from the push screen', asy
 
   await page.locator('#push-flex-json').fill('{ "type": "flex", ');
   assert.equal(await page.getByRole('button', { name: 'ดูตัวอย่างก่อน (Preview)' }).isDisabled(), true, 'broken JSON is not offered to the server');
-  assert.ok((await page.locator('.push-form .form-note').innerText()).includes('JSON ยังไม่ถูกต้อง'));
+  assert.ok((await page.locator('.push-form .form-note').filter({ hasText: 'JSON ยังไม่ถูกต้อง' }).innerText()).includes('JSON ยังไม่ถูกต้อง'));
 
   await page.locator('#push-flex-json').fill(JSON.stringify(FLEX_CARD, null, 2));
   assert.equal(await page.locator('#push-flex-alt').inputValue(), FLEX_CARD.altText, 'the altText comes from the card itself');
@@ -180,6 +182,7 @@ test('Flex Studio hands its card to the push screen instead of a share link', as
 
   await navTo(page, '✦', 'สร้างข้อความ (Flex Studio)');
   await page.getByRole('heading', { name: 'สร้างข้อความที่คนอยากเปิด' }).waitFor();
+  await page.locator('.editor-panel details.advanced > summary').click();
   const cardCopy = firstFlexText(JSON.parse(await page.locator('.editor-panel textarea').inputValue()));
   assert.ok(cardCopy, 'the seeded card has some copy to render');
   await page.locator('.flex-render').filter({ hasText: cardCopy }).waitFor({ timeout: 5_000 });
@@ -198,17 +201,17 @@ test('Flex Studio hands its card to the push screen instead of a share link', as
 test('a live scheduler job needs the release gate, the LIVE choice and a typed confirmation', async (t) => {
   const locked = harness();
   const lockedApp = await openApp(t, locked);
-  await navTo(lockedApp.page, '◷', 'ตั้งเวลาส่ง (Scheduler)');
+  await openScheduler(lockedApp.page);
   await lockedApp.page.getByRole('heading', { name: 'ตั้งเวลาส่งแคมเปญ' }).waitFor();
   const liveChoice = lockedApp.page.locator('label.choice').filter({ hasText: 'ส่งจริง (LIVE)' });
   assert.equal(await liveChoice.locator('input').isDisabled(), true, 'the LIVE choice is unavailable while the gate is off');
-  assert.ok((await liveChoice.innerText()).includes('ยังปิดประตูส่งจริง'));
+  assert.ok((await liveChoice.innerText()).includes('ยังส่งจริงไม่ได้'));
   assert.ok((await lockedApp.page.locator('.sidebar .mode-pill').innerText()).includes('โหมดทดสอบ'));
   assert.deepEqual(lockedApp.errors, []);
 
   const open = harness({ liveSendEnabled: true });
   const { page, errors } = await openApp(t, open);
-  await navTo(page, '◷', 'ตั้งเวลาส่ง (Scheduler)');
+  await openScheduler(page);
   await page.getByRole('heading', { name: 'ตั้งเวลาส่งแคมเปญ' }).waitFor();
   assert.ok((await page.locator('.sidebar .mode-pill').innerText()).includes('ส่งจริงได้'), 'the sidebar reports the opened gate');
 

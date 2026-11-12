@@ -78,7 +78,7 @@ async function openPage(t, fixture, routePath = '/', liffSdk) {
 test('Flex Studio turns the card into a LIFF link the operator opens on the phone', async (t) => {
   const fixture = harness();
   const { page, errors } = await openPage(t, fixture);
-  for (const group of ['ทำงานประจำวัน', 'ออกแบบข้อความ', 'ตั้งค่าระบบ']) await page.getByText(group).waitFor({ timeout: 10_000 });
+  for (const label of ['⌂ ภาพรวม', '✉ ส่งข้อความตรง', '✦ สร้างข้อความ (Flex Studio)', '♧ ลูกค้า', '↗ แจกลิงก์', '⚙ ตั้งค่า']) await page.getByRole('button', { name: label, exact: true }).waitFor({ timeout: 10_000 });
 
   await page.getByRole('button', { name: '✦ สร้างข้อความ (Flex Studio)', exact: true }).click();
   await page.getByRole('button', { name: 'แชร์จากมือถือ (LIFF)' }).click();
@@ -88,6 +88,7 @@ test('Flex Studio turns the card into a LIFF link the operator opens on the phon
   assert.match(await page.locator('.share-panel').innerText(), /ตัวยึดที่ยังไม่แทนค่า/);
   assert.equal(await page.locator('.share-link-row').count(), 0, 'no link is offered while the card still holds placeholders');
 
+  await page.locator('.editor-panel details.advanced > summary').click();
   await page.locator('.editor-panel textarea').fill(JSON.stringify(CARD));
   assert.equal(await page.locator('.share-panel .auth-error').count(), 0, 'a clean card no longer trips the placeholder warning');
   const link = await page.locator('.share-link-row input').inputValue();

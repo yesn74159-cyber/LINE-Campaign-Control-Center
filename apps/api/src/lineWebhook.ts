@@ -6,6 +6,7 @@ import { openOaSecret, vaultKey } from './lineOaConnect.js';
 import { payloadHash, verifyLineSignature } from './webhook.js';
 import { verifyReferralFollow } from './referralStore.js';
 import { createFixedWindowLimiter } from './security.js';
+import { OA_TIER_SQL } from './oaScope.js';
 
 export const MAX_WEBHOOK_BODY_BYTES = 100 * 1024;
 export const MAX_WEBHOOK_EVENTS = 100;
@@ -65,7 +66,7 @@ export async function resolveOaWebhookSecret(pool: Pool, oaId: string, key: Buff
   const result = await pool.query<{ workspace_id: string; secret_sealed: string | null }>(
     'select oa.workspace_id, v.secret_sealed from oa_integrations oa ' +
     'left join oa_credential_vault v on v.workspace_id=oa.workspace_id and v.oa_integration_id=oa.id ' +
-    "where oa.id=$1 and oa.environment='STAGING'",
+    'where oa.id=$1 and ' + OA_TIER_SQL,
     [oaId]
   );
   const row = result.rows[0];

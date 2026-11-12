@@ -18,6 +18,8 @@ import { createLineLoginConfig, registerLineLoginRoutes } from './lineLogin.js';
 import { PostgresLineLoginStore } from './lineLoginPostgresStore.js';
 import { registerReferralRoutes } from './referralRoutes.js';
 import { oaFriendUrl } from './oaFriendUrl.js';
+import { OA_TIER, resolveShareOa } from './oaScope.js';
+import { registerOaLinksRoutes } from './oaLinks.js';
 import { registerLineWebhookRoutes } from './lineWebhook.js';
 import { runWorkerOnce } from './worker.js';
 import { MockLineMessagingAdapter } from './lineAdapter.js';
@@ -109,21 +111,57 @@ export function buildApp(injectedRepository?: Repository) {
     if (!(await isDatabaseReachable(healthPool))) return reply.code(503).send({ ok: false, mode, liveSendEnabled, persistence, db: 'down' });
     return { ok: true, mode, liveSendEnabled, persistence, db: 'up' };
   });
-  // The LIFF id is public (it appears in every share link) but the Admin bundle must not be
-  // rebuilt when the operator registers the LIFF app, so the id is read from the server here.
-  // oaUrl exists because a Flex button carries only the bare LIFF url: once a card is shared it
-  // cannot be edited, so the card-less landing page is the last place that can still route a
-  // friend to the OA. The follow link is public, and the enabled OA's basic id is already stored.
-  app.get('/api/config', async () => {
-    let oaUrl = process.env.LINE_OA_FRIEND_URL || '';
-    if (!oaUrl) {
-      const found = await selected.database?.pool
-        ?.query('select basic_id from oa_integrations where enabled order by created_at limit 1')
-        .catch(() => null);
-      const basicId = found?.rows?.[0]?.basic_id;
-      oaUrl = oaFriendUrl(basicId) || '';
+  // Everything here is public: a LIFF id and an add-friend link appear in every share link.
+  // `?oa=` names the OA the visitor came through, which is the only correct answer once more
+  // than one OA is enabled — a shared card cannot be edited afterwards, so the card-less
+  // landing page is the last place that can still route a friend to the right account.
+  app.get<{ Querystring: { oa?: string } }>('/api/config', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const envLiffId = process.env.LINE_LIFF_CHANNEL_ID || null;
+    const envFriendUrl = process.env.LINE_OA_FRIEND_URL || null;
+    const loginEnabled = createLineLoginConfig().enabled && Boolean(process.env.LINE_LOGIN_CHANNEL_ID);
+    const base = { oaId: null, displayName: null, liffId: envLiffId, loginEnabled, ambiguous: false };
+    const pool = selected.database?.pool;
+    if (!pool) {
+      // Local dev has no Postgres; resolving the seeded OA keeps /share behaving like staging
+      // instead of falling back to a deployment-wide friend URL.
+      if (repo.kind !== 'memory') return { ...base, oaUrl: envFriendUrl, candidates: [] };
+      const usable = (await repo.listOas()).filter((oa) => oa.enabled && oa.environment === OA_TIER);
+      const wanted = (request.query.oa || '').trim();
+      const match = wanted
+        ? usable.find((oa) => oa.id === wanted || oa.basicId === wanted)
+        : usable.length === 1 ? usable[0] : undefined;
+      if (!match) {
+        return {
+          ...base, oaUrl: usable.length === 0 ? envFriendUrl : null,
+          ambiguous: !wanted && usable.length > 1,
+          candidates: usable.map(({ id, displayName, basicId }) => ({ id, displayName, basicId }))
+        };
+      }
+      return {
+        ...base, oaId: match.id, displayName: match.displayName,
+        oaUrl: oaFriendUrl(match.basicId) || envFriendUrl,
+        candidates: [{ id: match.id, displayName: match.displayName, basicId: match.basicId }]
+      };
     }
-    return { liffId: process.env.LINE_LIFF_CHANNEL_ID || null, oaUrl: oaUrl || null };
+    const resolved = await resolveShareOa(pool, request.query.oa).catch(() => null);
+    if (!resolved || resolved.status === 'NONE') {
+      return { ...base, oaUrl: envFriendUrl, candidates: [] };
+    }
+    const candidates = resolved.status === 'RESOLVED'
+      ? [{ id: resolved.oa.id, displayName: resolved.oa.displayName, basicId: resolved.oa.basicId }]
+      : resolved.candidates.map(({ id, displayName, basicId }) => ({ id, displayName, basicId }));
+    if (resolved.status !== 'RESOLVED') {
+      return { ...base, oaUrl: null, ambiguous: resolved.status === 'AMBIGUOUS', candidates };
+    }
+    const oa = resolved.oa;
+    return {
+      ...base, oaId: oa.id, displayName: oa.displayName,
+      // A LIFF app is bound to one OA; the env value only covers deployments that share one app.
+      liffId: oa.liffId || envLiffId,
+      oaUrl: oaFriendUrl(oa.basicId) || envFriendUrl,
+      candidates
+    };
   });
   const opsPool = selected.database?.pool;
   if (repo.kind === 'postgres' && opsPool) {
@@ -154,6 +192,7 @@ export function buildApp(injectedRepository?: Repository) {
   app.get<{ Params: { id: string } }>('/api/campaigns/:id/revisions', { preHandler: authorize('read'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[a-zA-Z0-9_-]+$' } } } } }, async (request) => ({ revisions: await repo.listRevisions(request.params.id, (request as RequestWithUser).user!.workspaceId) }));
   app.post<{ Params: { id: string }; Body: { flexJson: Record<string, unknown> } }>('/api/campaigns/:id/revisions', { preHandler: authorize('write'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[a-zA-Z0-9_-]+$' } } }, body: { type: 'object', required: ['flexJson'], additionalProperties: false, properties: { flexJson: { type: 'object' } } } } }, async (request, reply) => { try { const revision = await repo.createRevision(request.params.id, assertFlexJson(request.body.flexJson), (request as RequestWithUser).user!.email, (request as RequestWithUser).user!.workspaceId); return reply.code(201).send(revision); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid revision' }); } });
   app.get('/api/oas', { preHandler: authorize('read') }, async (request) => ({ oas: await repo.listOas((request as RequestWithUser).user!.workspaceId) }));
+  registerOaLinksRoutes(app, selected.database?.pool ?? null, repo, authorize('read'));
   app.post<{ Body: { providerId: string; basicId: string; displayName: string } }>('/api/oas', { preHandler: authorize('manage_oa'), schema: { body: { type: 'object', required: ['providerId', 'basicId', 'displayName'], additionalProperties: false, properties: { providerId: { type: 'string', minLength: 2, maxLength: 120 }, basicId: { type: 'string', minLength: 2, maxLength: 120 }, displayName: { type: 'string', minLength: 2, maxLength: 160 } } } } }, async (request, reply) => { try { const oa = await repo.createOa({ workspaceId: (request as RequestWithUser).user!.workspaceId, providerId: assertOaMetadata(request.body.providerId, 'providerId'), basicId: assertOaMetadata(request.body.basicId, 'basicId'), displayName: assertOaMetadata(request.body.displayName, 'displayName'), actor: (request as RequestWithUser).user!.email }); return reply.code(201).send(oa); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'invalid OA metadata' }); } });
   app.post<{ Params: { id: string } }>('/api/oas/:id/validate', { preHandler: authorize('manage_oa'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100 } } } } }, async (request, reply) => { try { return await repo.validateOa(request.params.id, (request as RequestWithUser).user!.workspaceId, (request as RequestWithUser).user!.email); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'OA validation failed' }); } });
   app.patch<{ Params: { id: string }; Body: { quotaPerMinute?: number; monthlyQuota?: number } }>('/api/oas/:id/limits', { preHandler: authorize('manage_oa'), schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', minLength: 1, maxLength: 100 } } }, body: { type: 'object', minProperties: 1, additionalProperties: false, properties: { quotaPerMinute: { type: 'integer', minimum: 1, maximum: 500 }, monthlyQuota: { type: 'integer', minimum: 0, maximum: 10000000 } } } } }, async (request, reply) => { try { return await repo.setOaLimits(request.params.id, (request as RequestWithUser).user!.workspaceId, { quotaPerMinute: request.body.quotaPerMinute, monthlyQuota: request.body.monthlyQuota }, (request as RequestWithUser).user!.email); } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'OA limits failed' }); } });

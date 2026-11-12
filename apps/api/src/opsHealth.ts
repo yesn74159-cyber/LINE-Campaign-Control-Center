@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { OA_TIER_SQL } from './oaScope.js';
 
 export type OpsThresholds = {
   stuckMinutes: number;
@@ -120,7 +121,7 @@ export async function readDeliveryHealth(pool: Pool, input: { workspaceId?: stri
        on w.oa_integration_id=oa.id and w.window_started_at=date_trunc('minute', now())
      left join oa_credential_vault v
        on v.workspace_id=oa.workspace_id and v.oa_integration_id=oa.id
-     where ($1::uuid is null or oa.workspace_id=$1) and oa.environment='STAGING' and oa.enabled
+     where ($1::uuid is null or oa.workspace_id=$1) and ${OA_TIER_SQL} and oa.enabled
      order by oa.display_name`,
     [workspaceId]
   );

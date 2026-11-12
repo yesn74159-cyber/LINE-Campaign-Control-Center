@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import type { AdminUser } from './types.js';
 import { createFixedWindowLimiter } from './security.js';
+import { OA_TIER_SQL, oaTierSql } from './oaScope.js';
 
 type BotInfo = { basicId: string; displayName: string };
 type Caller = FastifyRequest & { user?: AdminUser };
@@ -48,7 +49,7 @@ export async function resolveOaAccessToken(pool: Pool, input: { workspaceId: str
   const result = await pool.query<{ token_sealed: string | null }>(
     'select v.token_sealed from oa_credential_vault v ' +
     'join oa_integrations oa on oa.id=v.oa_integration_id and oa.workspace_id=v.workspace_id ' +
-    "where v.workspace_id=$1 and v.oa_integration_id=$2 and oa.environment='STAGING'",
+    'where v.workspace_id=$1 and v.oa_integration_id=$2 and ' + OA_TIER_SQL,
     [input.workspaceId, input.oaId]
   );
   const sealed = result.rows[0]?.token_sealed;
@@ -134,7 +135,7 @@ export async function recheckOaAccessToken(pool: Pool, input: { workspaceId: str
     [input.workspaceId, input.oaId]
   );
   await pool.query(
-    "update oa_integrations set last_validated_at=now(), validation_error=null where id=$1 and workspace_id=$2 and environment='STAGING'",
+    'update oa_integrations set last_validated_at=now(), validation_error=null where id=$1 and workspace_id=$2 and ' + oaTierSql(),
     [input.oaId, input.workspaceId]
   );
   if (input.actor) {

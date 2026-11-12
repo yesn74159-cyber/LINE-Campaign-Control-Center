@@ -51,10 +51,9 @@ async function pushRequest<T>(url: string, method: 'GET' | 'POST' = 'GET', body?
   return data as T;
 }
 
-export default function PushMessage({ oas, customers, liveSendEnabled, seed, onSeedUsed }: { oas: OaOption[]; customers: CustomerOption[]; liveSendEnabled: boolean; seed: FlexSeed; onSeedUsed: () => void }) {
+export default function PushMessage({ oas, oaId, customers, liveSendEnabled, seed, onSeedUsed }: { oas: OaOption[]; oaId: string; customers: CustomerOption[]; liveSendEnabled: boolean; seed: FlexSeed; onSeedUsed: () => void }) {
   const enabledOas = useMemo(() => oas.filter((oa) => oa.enabled && oa.environment === 'STAGING'), [oas]);
   const consented = useMemo(() => customers.filter((item) => item.optIn && !item.blockedAt && RECIPIENT_PATTERN.test(item.lineUserKey)), [customers]);
-  const [oaId, setOaId] = useState(enabledOas[0]?.id || '');
   const [recipientSelect, setRecipientSelect] = useState(consented[0]?.lineUserKey || MANUAL_RECIPIENT);
   const [manualRecipient, setManualRecipient] = useState('');
   const [kind, setKind] = useState<'text' | 'flex'>('text');
@@ -69,7 +68,6 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
   const [history, setHistory] = useState<PushRow[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => { if (!enabledOas.some((oa) => oa.id === oaId)) setOaId(enabledOas[0]?.id || ''); }, [enabledOas, oaId]);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 20_000); return () => clearInterval(timer); }, []);
   const loadHistory = () => { void pushRequest<{ pushes: PushRow[] }>('/api/messages/push/history').then((data) => setHistory(data.pushes)).catch(() => undefined); };
   useEffect(loadHistory, []);
@@ -143,10 +141,7 @@ export default function PushMessage({ oas, customers, liveSendEnabled, seed, onS
     <div className="push-layout">
       <section className="panel push-form">
         <div className="panel-head"><div><p className="eyebrow">ขั้นที่ 1</p><h3>เลือกผู้รับ</h3></div></div>
-        <label htmlFor="push-oa">บัญชี LINE OA ที่ใช้ส่ง</label>
-        <select id="push-oa" value={oaId} onChange={(event) => { setOaId(event.target.value); resetFlow(); }}>
-          {enabledOas.map((oa) => <option value={oa.id} key={oa.id}>{oa.displayName} · {oa.basicId}</option>)}
-        </select>
+        <p className="form-note">บัญชี LINE OA ที่ใช้ส่ง: <strong>{selectedOa ? `${selectedOa.displayName} · ${selectedOa.basicId}` : 'ยังไม่ได้เลือก OA'}</strong> · เปลี่ยนได้ที่ตัวเลือก OA ด้านบนของหน้าจอ</p>
         <label htmlFor="push-recipient">ลูกค้า (เฉพาะคนที่อนุญาตให้ส่ง)</label>
         <select id="push-recipient" value={recipientSelect} onChange={(event) => { setRecipientSelect(event.target.value); resetFlow(); }}>
           {consented.map((item) => <option value={item.lineUserKey} key={item.lineUserKey}>{item.displayName || 'ลูกค้า'} · LINE ID {maskKey(item.lineUserKey)}</option>)}
