@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiUrl } from './apiClient.js';
 import FlexPreview from './FlexPreview.js';
 
-type OaOption = { id: string; displayName: string; basicId: string; enabled: boolean; environment: string; killSwitch: boolean };
+type OaOption = { id: string; displayName: string; basicId: string; providerId: string; enabled: boolean; environment: string; killSwitch: boolean };
 type CustomerOption = { lineUserKey: string; providerId: string; displayName?: string; optIn: boolean; blockedAt?: string };
 type Preview = {
   previewId: string; oaDisplayName: string; recipient: string; text: string; mode: string; expiresAt: string;
@@ -10,7 +10,7 @@ type Preview = {
 };
 type PushRow = {
   id: string; recipient: string; text: string; messageType: string; mode: string; status: string; providerStatus: number | null;
-  providerMessageId: string | null; recipientName: string | null; error: string | null; createdAt: string;
+  providerMessageId: string | null; recipientName: string | null; error: string | null; oaId: string; createdAt: string;
 };
 type FlexSeed = { flex: Record<string, unknown>; label?: string } | null;
 
@@ -53,7 +53,11 @@ async function pushRequest<T>(url: string, method: 'GET' | 'POST' = 'GET', body?
 
 export default function PushMessage({ oas, oaId, customers, liveSendEnabled, seed, onSeedUsed }: { oas: OaOption[]; oaId: string; customers: CustomerOption[]; liveSendEnabled: boolean; seed: FlexSeed; onSeedUsed: () => void }) {
   const enabledOas = useMemo(() => oas.filter((oa) => oa.enabled && oa.environment === 'STAGING'), [oas]);
-  const consented = useMemo(() => customers.filter((item) => item.optIn && !item.blockedAt && RECIPIENT_PATTERN.test(item.lineUserKey)), [customers]);
+  const selectedOa = enabledOas.find((oa) => oa.id === oaId);
+  // Consent is per provider, so a customer of another OA can never receive this OA's
+  // message; offering them here would only produce a server refusal after the preview.
+  const scopedCustomers = useMemo(() => (selectedOa ? customers.filter((item) => item.providerId === selectedOa.providerId) : customers), [customers, selectedOa?.providerId]);
+  const consented = useMemo(() => scopedCustomers.filter((item) => item.optIn && !item.blockedAt && RECIPIENT_PATTERN.test(item.lineUserKey)), [scopedCustomers]);
   const [recipientSelect, setRecipientSelect] = useState(consented[0]?.lineUserKey || MANUAL_RECIPIENT);
   const [manualRecipient, setManualRecipient] = useState('');
   const [kind, setKind] = useState<'text' | 'flex'>('text');
@@ -85,9 +89,10 @@ export default function PushMessage({ oas, oaId, customers, liveSendEnabled, see
     // Only a new hand-off should reset the editor; onSeedUsed changes identity on every parent render.
   }, [seed]);
 
-  const selectedOa = enabledOas.find((oa) => oa.id === oaId);
   const recipient = recipientSelect === MANUAL_RECIPIENT ? manualRecipient.trim() : recipientSelect;
   const customer = consented.find((item) => item.lineUserKey.toLowerCase() === recipient.toLowerCase());
+  // The history endpoint is workspace-wide; the operator reads it as "what this OA sent".
+  const scopedHistory = useMemo(() => (selectedOa ? history.filter((row) => row.oaId === selectedOa.id) : history), [history, selectedOa?.id]);
   const flexDoc = useMemo(() => {
     if (kind !== 'flex') return null;
     try { return JSON.parse(flexText) as Record<string, unknown>; } catch { return undefined; }
@@ -147,6 +152,7 @@ export default function PushMessage({ oas, oaId, customers, liveSendEnabled, see
           {consented.map((item) => <option value={item.lineUserKey} key={item.lineUserKey}>{item.displayName || 'ลูกค้า'} · LINE ID {maskKey(item.lineUserKey)}</option>)}
           <option value={MANUAL_RECIPIENT}>กรอก LINE User ID เอง</option>
         </select>
+        {selectedOa && customers.length > 0 && consented.length === 0 && <p className="form-note">ยังไม่มีลูกค้าที่ติดตาม OA นี้ · เลือก OA อื่นที่แถบด้านบน หรือกรอก LINE User ID ของลูกค้าที่ติดตาม OA นี้เอง</p>}
         {recipientSelect === MANUAL_RECIPIENT && <>
           <label htmlFor="push-recipient-manual">LINE User ID (ขึ้นต้นด้วย U ตามด้วยตัวอักษร 32 ตัว)</label>
           <input id="push-recipient-manual" value={manualRecipient} onChange={(event) => { setManualRecipient(event.target.value); resetFlow(); }} placeholder="U87cf..." spellCheck={false} />
@@ -203,12 +209,12 @@ export default function PushMessage({ oas, oaId, customers, liveSendEnabled, see
     {error && <section className="panel push-result failure"><strong>✕ {error}</strong></section>}
 
     <section className="panel table-panel">
-      <div className="table-head"><strong>ประวัติการส่งตรง</strong><span>{history.length} รายการล่าสุด</span></div>
-      {history.length ? history.map((row) => <div className="audit-row" key={row.id}>
+      <div className="table-head"><strong>ประวัติการส่งตรง</strong><span>{scopedHistory.length} รายการล่าสุด{selectedOa ? ` · ${selectedOa.displayName}` : ''}</span></div>
+      {scopedHistory.length ? scopedHistory.map((row) => <div className="audit-row" key={row.id}>
         <span className={`audit-dot ${row.status === 'SENT' ? 'green-dot' : ''}`} />
         <div><strong>{statusLabel[row.status] || row.status} · {row.mode === 'LIVE' ? 'ส่งจริง' : 'ทดสอบ'}</strong><small>{row.recipientName || `LINE ID ${maskKey(row.recipient)}`} · {row.messageType === 'flex' ? '[การ์ด Flex] ' : ''}"{row.text.slice(0, 60)}{row.text.length > 60 ? '…' : ''}"{row.error ? ` · ${row.error}` : ''}</small></div>
         <time>{new Date(row.createdAt).toLocaleString('th-TH')}</time>
-      </div>) : <div className="empty-inline">ยังไม่มีการส่งข้อความตรง</div>}
+      </div>) : <div className="empty-inline">{selectedOa ? 'ยังไม่มีการส่งข้อความตรงของ OA นี้' : 'ยังไม่มีการส่งข้อความตรง'}</div>}
     </section>
   </section>;
 }

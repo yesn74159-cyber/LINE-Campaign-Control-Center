@@ -176,3 +176,24 @@ test('the admin has one OA picker and the referral and scheduler screens read it
   const e2e = read('tests/e2e.visual.test.mjs');
   assert.doesNotMatch(e2e, /#referral-oa/, 'the e2e suite must drive the shared picker, not a removed select');
 });
+
+test('the customer list is scoped by the picked OA instead of mixing every provider', async () => {
+  const fs = await import('node:fs');
+  const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+  const view = read('apps/admin/src/app/CustomersView.tsx');
+  // A customer row carries the provider it followed, so the picker's OA is the filter.
+  assert.match(view, /providerId \? customers\.filter\(\(customer\) => customer\.providerId === providerId\) : customers/);
+  assert.match(view, /oaName\?: string \| null/);
+  assert.match(view, /providerId\?: string \| null/);
+
+  const main = read('apps/admin/src/main.tsx');
+  assert.match(main, /oaName=\{selectedOa\?\.displayName \|\| null\}/);
+  assert.match(main, /providerId=\{selectedOa\?\.providerId \|\| null\}/);
+
+  // The direct-send picker has the same rule: offering another OA's customer only
+  // ends in the server's CONSENT_REQUIRED refusal after the operator typed a message.
+  const push = read('apps/admin/src/PushMessage.tsx');
+  assert.match(push, /customers\.filter\(\(item\) => item\.providerId === selectedOa\.providerId\)/);
+  assert.match(push, /ยังไม่มีลูกค้าที่ติดตาม OA นี้/);
+  assert.match(push, /history\.filter\(\(row\) => row\.oaId === selectedOa\.id\)/);
+});
